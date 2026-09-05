@@ -1,4 +1,5 @@
 const std = @import("std");
+const source = @import("source.zig");
 
 const usage =
     \\usage: pseudocode_compiler <input.pseudo> [-o output.py]
@@ -58,8 +59,12 @@ pub fn main(init: std.process.Init) !void {
         std.process.exit(2);
     };
 
-    std.debug.print("input: {s}\n", .{options.inputPath});
-    if (options.outputPath) |path| std.debug.print("output: {s}\n", .{path});
+    const text = source.readSource(init.io, arena, options.inputPath) catch |err| {
+        std.debug.print("error: cannot read '{s}': {s}\n", .{ options.inputPath, @errorName(err) });
+        std.process.exit(1);
+    };
+
+    std.debug.print("read {d} bytes from {s}\n", .{ text.len, options.inputPath });
 }
 
 test "parseArgs accepts an input file" {
