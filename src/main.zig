@@ -64,7 +64,10 @@ pub fn main(init: std.process.Init) !void {
         std.process.exit(1);
     };
 
-    std.debug.print("read {d} bytes from {s}\n", .{ text.len, options.inputPath });
+    const lines = try source.splitLines(arena, text);
+    for (lines) |line| {
+        std.debug.print("{d}: {s}\n", .{ line.number, line.text });
+    }
 }
 
 test "parseArgs accepts an input file" {
