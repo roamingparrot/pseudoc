@@ -86,3 +86,8 @@ test "parseArgs rejects missing input and unknown options" {
     try std.testing.expectError(error.MissingOutputPath, parseArgs(&.{ "prog", "a.pseudo", "-o" }));
     try std.testing.expectError(error.UnknownOption, parseArgs(&.{ "prog", "-x" }));
 }
+
+// tests in other files only run if main.zig references them
+test {
+    _ = @import("source.zig");
+}
