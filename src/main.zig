@@ -1,5 +1,6 @@
 const std = @import("std");
 const source = @import("source.zig");
+const lexer = @import("lexer.zig");
 
 const usage =
     \\usage: pseudocode_compiler <input.pseudo> [-o output.py]
@@ -64,9 +65,9 @@ pub fn main(init: std.process.Init) !void {
         std.process.exit(1);
     };
 
-    const lines = try source.splitLines(arena, text);
-    for (lines) |line| {
-        std.debug.print("{d}: {s}\n", .{ line.number, line.text });
+    const tokens = try lexer.tokenize(arena, text);
+    for (tokens) |token| {
+        std.debug.print("{d}:{d} {s} '{s}'\n", .{ token.line, token.column, @tagName(token.kind), token.text });
     }
 }
 
@@ -90,4 +91,5 @@ test "parseArgs rejects missing input and unknown options" {
 // tests in other files only run if main.zig references them
 test {
     _ = @import("source.zig");
+    _ = @import("lexer.zig");
 }
