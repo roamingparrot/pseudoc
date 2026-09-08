@@ -7,7 +7,89 @@ pub const TokenKind = enum {
     newline,
     eof,
     invalid,
+
+    // keywords
+    kw_declare,
+    kw_constant,
+    kw_input,
+    kw_output,
+    kw_if,
+    kw_then,
+    kw_else,
+    kw_endif,
+    kw_for,
+    kw_to,
+    kw_step,
+    kw_next,
+    kw_while,
+    kw_do,
+    kw_endwhile,
+    kw_repeat,
+    kw_until,
+    kw_case,
+    kw_of,
+    kw_otherwise,
+    kw_endcase,
+    kw_procedure,
+    kw_endprocedure,
+    kw_function,
+    kw_endfunction,
+    kw_returns,
+    kw_return,
+    kw_call,
+    kw_and,
+    kw_or,
+    kw_not,
+    kw_div,
+    kw_mod,
+    kw_true,
+    kw_false,
+    kw_array,
+    kw_byref,
+    kw_byval,
 };
+
+// CIE keywords are written in capitals, so lookup is case sensitive
+const keywords = std.StaticStringMap(TokenKind).initComptime(.{
+    .{ "DECLARE", .kw_declare },
+    .{ "CONSTANT", .kw_constant },
+    .{ "INPUT", .kw_input },
+    .{ "OUTPUT", .kw_output },
+    .{ "IF", .kw_if },
+    .{ "THEN", .kw_then },
+    .{ "ELSE", .kw_else },
+    .{ "ENDIF", .kw_endif },
+    .{ "FOR", .kw_for },
+    .{ "TO", .kw_to },
+    .{ "STEP", .kw_step },
+    .{ "NEXT", .kw_next },
+    .{ "WHILE", .kw_while },
+    .{ "DO", .kw_do },
+    .{ "ENDWHILE", .kw_endwhile },
+    .{ "REPEAT", .kw_repeat },
+    .{ "UNTIL", .kw_until },
+    .{ "CASE", .kw_case },
+    .{ "OF", .kw_of },
+    .{ "OTHERWISE", .kw_otherwise },
+    .{ "ENDCASE", .kw_endcase },
+    .{ "PROCEDURE", .kw_procedure },
+    .{ "ENDPROCEDURE", .kw_endprocedure },
+    .{ "FUNCTION", .kw_function },
+    .{ "ENDFUNCTION", .kw_endfunction },
+    .{ "RETURNS", .kw_returns },
+    .{ "RETURN", .kw_return },
+    .{ "CALL", .kw_call },
+    .{ "AND", .kw_and },
+    .{ "OR", .kw_or },
+    .{ "NOT", .kw_not },
+    .{ "DIV", .kw_div },
+    .{ "MOD", .kw_mod },
+    .{ "TRUE", .kw_true },
+    .{ "FALSE", .kw_false },
+    .{ "ARRAY", .kw_array },
+    .{ "BYREF", .kw_byref },
+    .{ "BYVAL", .kw_byval },
+});
 
 pub const Token = struct {
     kind: TokenKind,
@@ -88,7 +170,9 @@ pub const Lexer = struct {
 
         if (isLetter(c)) {
             while (isLetter(self.peek()) or isDigit(self.peek())) self.position += 1;
-            return self.makeToken(.identifier, start);
+            const word = self.source[start..self.position];
+            const kind = keywords.get(word) orelse TokenKind.identifier;
+            return self.makeToken(kind, start);
         }
 
         if (isDigit(c)) return self.readNumber(start);
@@ -148,4 +232,13 @@ test "lexer tracks line and column" {
 
 test "a dot without digits after it is not part of the number" {
     try expectKinds("7.", &.{ .integer, .invalid, .eof });
+}
+
+test "keywords are recognised in capitals only" {
+    try expectKinds("IF THEN ELSE ENDIF", &.{ .kw_if, .kw_then, .kw_else, .kw_endif, .eof });
+    try expectKinds("if Then", &.{ .identifier, .identifier, .eof });
+}
+
+test "keyword prefixes are still identifiers" {
+    try expectKinds("IFFY ENDIFX", &.{ .identifier, .identifier, .eof });
 }
