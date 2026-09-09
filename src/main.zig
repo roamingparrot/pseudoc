@@ -1,6 +1,6 @@
 const std = @import("std");
 const source = @import("source.zig");
-const lexer = @import("lexer.zig");
+const translator = @import("translator.zig");
 
 const usage =
     \\usage: pseudocode_compiler <input.pseudo> [-o output.py]
@@ -65,9 +65,19 @@ pub fn main(init: std.process.Init) !void {
         std.process.exit(1);
     };
 
-    const tokens = try lexer.tokenize(arena, text);
-    for (tokens) |token| {
-        std.debug.print("{d}:{d} {s} '{s}'\n", .{ token.line, token.column, @tagName(token.kind), token.text });
+    var diagnostic = translator.Diagnostic{};
+    const python = translator.translate(arena, text, &diagnostic) catch |err| switch (err) {
+        error.SyntaxError => {
+            std.debug.print("{s}:{d}:{d}: error: {s}\n", .{ options.inputPath, diagnostic.line, diagnostic.column, diagnostic.message });
+            std.process.exit(1);
+        },
+        error.OutOfMemory => return err,
+    };
+
+    if (options.outputPath) |path| {
+        try std.Io.Dir.cwd().writeFile(init.io, .{ .sub_path = path, .data = python });
+    } else {
+        try std.Io.File.stdout().writeStreamingAll(init.io, python);
     }
 }
 
@@ -92,4 +102,5 @@ test "parseArgs rejects missing input and unknown options" {
 test {
     _ = @import("source.zig");
     _ = @import("lexer.zig");
+    _ = @import("translator.zig");
 }
