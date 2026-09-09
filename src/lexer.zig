@@ -4,9 +4,31 @@ pub const TokenKind = enum {
     identifier,
     integer,
     real,
+    string,
     newline,
     eof,
     invalid,
+
+    // operators and punctuation
+    arrow,
+    plus,
+    minus,
+    star,
+    slash,
+    caret,
+    ampersand,
+    equals,
+    not_equals,
+    less,
+    less_equal,
+    greater,
+    greater_equal,
+    l_paren,
+    r_paren,
+    l_bracket,
+    r_bracket,
+    comma,
+    colon,
 
     // keywords
     kw_declare,
@@ -177,8 +199,71 @@ pub const Lexer = struct {
 
         if (isDigit(c)) return self.readNumber(start);
 
+        if (c == '"' or c == '\'') return self.readString(start, c);
+
+        // the unicode arrow is three bytes in utf-8
+        if (std.mem.startsWith(u8, self.source[self.position..], "\u{2190}")) {
+            self.position += 3;
+            return self.makeToken(.arrow, start);
+        }
+
+        return self.readOperator(start);
+    }
+
+    fn readOperator(self: *Lexer, start: usize) Token {
+        const c = self.peek();
+        const following = self.peekNext();
         self.position += 1;
-        return self.makeToken(.invalid, start);
+
+        const kind: TokenKind = switch (c) {
+            '+' => .plus,
+            '-' => .minus,
+            '*' => .star,
+            '/' => .slash,
+            '^' => .caret,
+            '&' => .ampersand,
+            '=' => .equals,
+            '(' => .l_paren,
+            ')' => .r_paren,
+            '[' => .l_bracket,
+            ']' => .r_bracket,
+            ',' => .comma,
+            ':' => .colon,
+            '<' => blk: {
+                if (following == '-') {
+                    self.position += 1;
+                    break :blk .arrow;
+                } else if (following == '>') {
+                    self.position += 1;
+                    break :blk .not_equals;
+                } else if (following == '=') {
+                    self.position += 1;
+                    break :blk .less_equal;
+                }
+                break :blk .less;
+            },
+            '>' => blk: {
+                if (following == '=') {
+                    self.position += 1;
+                    break :blk .greater_equal;
+                }
+                break :blk .greater;
+            },
+            else => .invalid,
+        };
+        return self.makeToken(kind, start);
+    }
+
+    // The token text includes both quotes. CIE strings have no escape
+    // sequences, so the string simply ends at the next matching quote.
+    fn readString(self: *Lexer, start: usize, quote: u8) Token {
+        self.position += 1; // opening quote
+        while (self.position < self.source.len and self.peek() != quote and self.peek() != '\n') {
+            self.position += 1;
+        }
+        if (self.peek() != quote) return self.makeToken(.invalid, start); // unterminated
+        self.position += 1; // closing quote
+        return self.makeToken(.string, start);
     }
 
     fn readNumber(self: *Lexer, start: usize) Token {
@@ -241,4 +326,32 @@ test "keywords are recognised in capitals only" {
 
 test "keyword prefixes are still identifiers" {
     try expectKinds("IFFY ENDIFX", &.{ .identifier, .identifier, .eof });
+}
+
+test "string contents are not split into operators" {
+    try expectKinds("\"a <> b AND c\"", &.{ .string, .eof });
+}
+
+test "single quoted characters are strings too" {
+    try expectKinds("'x'", &.{ .string, .eof });
+}
+
+test "unterminated string is invalid" {
+    try expectKinds("\"oops\nx", &.{ .invalid, .newline, .identifier, .eof });
+}
+
+test "assignment arrows" {
+    try expectKinds("x \u{2190} 1", &.{ .identifier, .arrow, .integer, .eof });
+    try expectKinds("x <- 1", &.{ .identifier, .arrow, .integer, .eof });
+}
+
+test "comparison operators" {
+    try expectKinds("< <= > >= = <>", &.{ .less, .less_equal, .greater, .greater_equal, .equals, .not_equals, .eof });
+}
+
+test "arithmetic and brackets" {
+    try expectKinds("a[1] + (2 * 3) ^ 2 / 4 - 5 & b", &.{
+        .identifier, .l_bracket, .integer, .r_bracket, .plus, .l_paren, .integer, .star, .integer, .r_paren,
+        .caret,      .integer,   .slash,   .integer,   .minus, .integer, .ampersand, .identifier, .eof,
+    });
 }
