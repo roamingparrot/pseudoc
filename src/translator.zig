@@ -92,6 +92,7 @@ const Translator = struct {
         const token = self.current();
         switch (token.kind) {
             .identifier => try self.translateAssignment(),
+            .kw_output => try self.translateOutput(),
             else => {
                 const found = try self.describe(token);
                 return self.fail(token, "unexpected {s}, expected a statement", .{found});
@@ -105,6 +106,26 @@ const Translator = struct {
         const value = try self.parseExpression();
         try self.endOfStatement();
         const line = try std.fmt.allocPrint(self.arena, "{s} = {s}", .{ name.text, value });
+        try self.emit(line);
+    }
+
+    // OUTPUT a, b prints the values with nothing between them, so a single
+    // value can use plain print() but several need sep="".
+    fn translateOutput(self: *Translator) TranslateError!void {
+        _ = self.advance(); // OUTPUT
+        var arguments: std.ArrayList(u8) = .empty;
+        try arguments.appendSlice(self.arena, try self.parseExpression());
+        var count: usize = 1;
+        while (self.check(.comma)) {
+            _ = self.advance();
+            try arguments.appendSlice(self.arena, ", ");
+            try arguments.appendSlice(self.arena, try self.parseExpression());
+            count += 1;
+        }
+        try self.endOfStatement();
+
+        const separator = if (count > 1) ", sep=\"\"" else "";
+        const line = try std.fmt.allocPrint(self.arena, "print({s}{s})", .{ arguments.items, separator });
         try self.emit(line);
     }
 
@@ -172,6 +193,18 @@ test "assignment of a string keeps its text" {
 
 test "blank lines and comments are ignored" {
     try expectPython("\n// set up\nx <- 1\n\n", "x = 1\n");
+}
+
+test "output of a single value" {
+    try expectPython("OUTPUT \"hello\"\n", "print(\"hello\")\n");
+}
+
+test "output of several values has no separator" {
+    try expectPython("OUTPUT \"x = \", x\n", "print(\"x = \", x, sep=\"\")\n");
+}
+
+test "output without a value is an error" {
+    try expectError("OUTPUT\n", 1, "expected a value but found end of line");
 }
 
 test "missing arrow is reported with its line" {
