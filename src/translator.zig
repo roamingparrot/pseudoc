@@ -93,6 +93,7 @@ const Translator = struct {
         switch (token.kind) {
             .identifier => try self.translateAssignment(),
             .kw_output => try self.translateOutput(),
+            .kw_input => try self.translateInput(),
             else => {
                 const found = try self.describe(token);
                 return self.fail(token, "unexpected {s}, expected a statement", .{found});
@@ -106,6 +107,14 @@ const Translator = struct {
         const value = try self.parseExpression();
         try self.endOfStatement();
         const line = try std.fmt.allocPrint(self.arena, "{s} = {s}", .{ name.text, value });
+        try self.emit(line);
+    }
+
+    fn translateInput(self: *Translator) TranslateError!void {
+        _ = self.advance(); // INPUT
+        const name = try self.expect(.identifier, "a variable name after INPUT");
+        try self.endOfStatement();
+        const line = try std.fmt.allocPrint(self.arena, "{s} = input()", .{name.text});
         try self.emit(line);
     }
 
@@ -205,6 +214,14 @@ test "output of several values has no separator" {
 
 test "output without a value is an error" {
     try expectError("OUTPUT\n", 1, "expected a value but found end of line");
+}
+
+test "input reads into a variable" {
+    try expectPython("INPUT name\n", "name = input()\n");
+}
+
+test "input needs a variable name" {
+    try expectError("INPUT 5\n", 1, "expected a variable name after INPUT but found '5'");
 }
 
 test "missing arrow is reported with its line" {
