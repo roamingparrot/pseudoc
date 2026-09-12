@@ -138,13 +138,57 @@ const Translator = struct {
         try self.emit(line);
     }
 
-    // For now an expression is a single literal or variable name.
+    // Expressions are parsed by precedence climbing, one function per
+    // level, lowest precedence first. Each one returns the Python text.
     fn parseExpression(self: *Translator) TranslateError![]const u8 {
+        return self.parseAdditive();
+    }
+
+    fn joinBinary(self: *Translator, left: []const u8, operator: []const u8, right: []const u8) ![]const u8 {
+        return std.fmt.allocPrint(self.arena, "{s} {s} {s}", .{ left, operator, right });
+    }
+
+    fn parseAdditive(self: *Translator) TranslateError![]const u8 {
+        var left = try self.parseTerm();
+        while (self.check(.plus) or self.check(.minus)) {
+            const operator = self.advance();
+            const right = try self.parseTerm();
+            left = try self.joinBinary(left, operator.text, right);
+        }
+        return left;
+    }
+
+    fn parseTerm(self: *Translator) TranslateError![]const u8 {
+        var left = try self.parseUnary();
+        while (self.check(.star) or self.check(.slash)) {
+            const operator = self.advance();
+            const right = try self.parseUnary();
+            left = try self.joinBinary(left, operator.text, right);
+        }
+        return left;
+    }
+
+    fn parseUnary(self: *Translator) TranslateError![]const u8 {
+        if (self.check(.minus)) {
+            _ = self.advance();
+            const operand = try self.parseUnary();
+            return std.fmt.allocPrint(self.arena, "-{s}", .{operand});
+        }
+        return self.parsePrimary();
+    }
+
+    fn parsePrimary(self: *Translator) TranslateError![]const u8 {
         const token = self.current();
         switch (token.kind) {
             .integer, .real, .string, .identifier => {
                 _ = self.advance();
                 return token.text;
+            },
+            .l_paren => {
+                _ = self.advance();
+                const inner = try self.parseExpression();
+                _ = try self.expect(.r_paren, "')'");
+                return std.fmt.allocPrint(self.arena, "({s})", .{inner});
             },
             else => {
                 const found = try self.describe(token);
@@ -222,6 +266,22 @@ test "input reads into a variable" {
 
 test "input needs a variable name" {
     try expectError("INPUT 5\n", 1, "expected a variable name after INPUT but found '5'");
+}
+
+test "arithmetic keeps operators and brackets" {
+    try expectPython("x <- (a + 2) * 3 - b / 4\n", "x = (a + 2) * 3 - b / 4\n");
+}
+
+test "unary minus" {
+    try expectPython("x <- -5 + -y\n", "x = -5 + -y\n");
+}
+
+test "real numbers" {
+    try expectPython("pi <- 3.14159\n", "pi = 3.14159\n");
+}
+
+test "missing closing bracket" {
+    try expectError("x <- (1 + 2\n", 1, "expected ')' but found end of line");
 }
 
 test "missing arrow is reported with its line" {
