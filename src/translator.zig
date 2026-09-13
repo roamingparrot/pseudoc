@@ -160,10 +160,15 @@ const Translator = struct {
 
     fn parseTerm(self: *Translator) TranslateError![]const u8 {
         var left = try self.parseUnary();
-        while (self.check(.star) or self.check(.slash)) {
+        while (self.check(.star) or self.check(.slash) or self.check(.kw_div) or self.check(.kw_mod)) {
             const operator = self.advance();
             const right = try self.parseUnary();
-            left = try self.joinBinary(left, operator.text, right);
+            const pythonOperator = switch (operator.kind) {
+                .kw_div => "//",
+                .kw_mod => "%",
+                else => operator.text,
+            };
+            left = try self.joinBinary(left, pythonOperator, right);
         }
         return left;
     }
@@ -174,7 +179,18 @@ const Translator = struct {
             const operand = try self.parseUnary();
             return std.fmt.allocPrint(self.arena, "-{s}", .{operand});
         }
-        return self.parsePrimary();
+        return self.parsePower();
+    }
+
+    // ^ binds tighter than unary minus and groups to the right
+    fn parsePower(self: *Translator) TranslateError![]const u8 {
+        const base = try self.parsePrimary();
+        if (self.check(.caret)) {
+            _ = self.advance();
+            const exponent = try self.parseUnary();
+            return self.joinBinary(base, "**", exponent);
+        }
+        return base;
     }
 
     fn parsePrimary(self: *Translator) TranslateError![]const u8 {
@@ -282,6 +298,15 @@ test "real numbers" {
 
 test "missing closing bracket" {
     try expectError("x <- (1 + 2\n", 1, "expected ')' but found end of line");
+}
+
+test "div and mod become integer division and remainder" {
+    try expectPython("q <- a DIV 3\nr <- a MOD 3\n", "q = a // 3\nr = a % 3\n");
+}
+
+test "power operator" {
+    try expectPython("x <- 2 ^ 3 ^ 2\n", "x = 2 ** 3 ** 2\n");
+    try expectPython("x <- 2 * n ^ 2\n", "x = 2 * n ** 2\n");
 }
 
 test "missing arrow is reported with its line" {
