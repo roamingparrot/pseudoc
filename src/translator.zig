@@ -193,10 +193,26 @@ const Translator = struct {
         return base;
     }
 
+    // CIE strings have no escapes but Python strings do, so a backslash in
+    // the pseudocode must be doubled to stay a plain backslash.
+    fn pythonString(self: *Translator, text: []const u8) ![]const u8 {
+        if (std.mem.indexOfScalar(u8, text, '\\') == null) return text;
+        var escaped: std.ArrayList(u8) = .empty;
+        for (text) |c| {
+            if (c == '\\') try escaped.append(self.arena, '\\');
+            try escaped.append(self.arena, c);
+        }
+        return escaped.items;
+    }
+
     fn parsePrimary(self: *Translator) TranslateError![]const u8 {
         const token = self.current();
         switch (token.kind) {
-            .integer, .real, .string, .identifier => {
+            .string => {
+                _ = self.advance();
+                return self.pythonString(token.text);
+            },
+            .integer, .real, .identifier => {
                 _ = self.advance();
                 return token.text;
             },
@@ -307,6 +323,14 @@ test "div and mod become integer division and remainder" {
 test "power operator" {
     try expectPython("x <- 2 ^ 3 ^ 2\n", "x = 2 ** 3 ** 2\n");
     try expectPython("x <- 2 * n ^ 2\n", "x = 2 * n ** 2\n");
+}
+
+test "operator words inside strings are left alone" {
+    try expectPython("OUTPUT \"a <> b AND c MOD 2 <- 1\"\n", "print(\"a <> b AND c MOD 2 <- 1\")\n");
+}
+
+test "backslashes in strings are escaped for python" {
+    try expectPython("OUTPUT \"C:\\new\"\n", "print(\"C:\\\\new\")\n");
 }
 
 test "missing arrow is reported with its line" {
