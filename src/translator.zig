@@ -141,7 +141,58 @@ const Translator = struct {
     // Expressions are parsed by precedence climbing, one function per
     // level, lowest precedence first. Each one returns the Python text.
     fn parseExpression(self: *Translator) TranslateError![]const u8 {
-        return self.parseAdditive();
+        return self.parseOr();
+    }
+
+    fn parseOr(self: *Translator) TranslateError![]const u8 {
+        var left = try self.parseAnd();
+        while (self.check(.kw_or)) {
+            _ = self.advance();
+            const right = try self.parseAnd();
+            left = try self.joinBinary(left, "or", right);
+        }
+        return left;
+    }
+
+    fn parseAnd(self: *Translator) TranslateError![]const u8 {
+        var left = try self.parseNot();
+        while (self.check(.kw_and)) {
+            _ = self.advance();
+            const right = try self.parseNot();
+            left = try self.joinBinary(left, "and", right);
+        }
+        return left;
+    }
+
+    fn parseNot(self: *Translator) TranslateError![]const u8 {
+        if (self.check(.kw_not)) {
+            _ = self.advance();
+            const operand = try self.parseNot();
+            return std.fmt.allocPrint(self.arena, "not {s}", .{operand});
+        }
+        return self.parseComparison();
+    }
+
+    fn comparisonOperator(kind: TokenKind) ?[]const u8 {
+        return switch (kind) {
+            .equals => "==",
+            .not_equals => "!=",
+            .less => "<",
+            .less_equal => "<=",
+            .greater => ">",
+            .greater_equal => ">=",
+            else => null,
+        };
+    }
+
+    fn parseComparison(self: *Translator) TranslateError![]const u8 {
+        const left = try self.parseAdditive();
+        if (comparisonOperator(self.current().kind)) |pythonOperator| {
+            _ = self.advance();
+            const right = try self.parseAdditive();
+            return self.joinBinary(left, pythonOperator, right);
+        }
+        return left;
     }
 
     fn joinBinary(self: *Translator, left: []const u8, operator: []const u8, right: []const u8) ![]const u8 {
@@ -215,6 +266,14 @@ const Translator = struct {
             .integer, .real, .identifier => {
                 _ = self.advance();
                 return token.text;
+            },
+            .kw_true => {
+                _ = self.advance();
+                return "True";
+            },
+            .kw_false => {
+                _ = self.advance();
+                return "False";
             },
             .l_paren => {
                 _ = self.advance();
@@ -331,6 +390,27 @@ test "operator words inside strings are left alone" {
 
 test "backslashes in strings are escaped for python" {
     try expectPython("OUTPUT \"C:\\new\"\n", "print(\"C:\\\\new\")\n");
+}
+
+test "equals and not equals become python comparisons" {
+    try expectPython("a <- x = 3\nb <- x <> 3\n", "a = x == 3\nb = x != 3\n");
+}
+
+test "ordering comparisons" {
+    try expectPython("a <- x < 1\nb <- x <= 2\nc <- x > 3\nd <- x >= 4\n", "a = x < 1\nb = x <= 2\nc = x > 3\nd = x >= 4\n");
+}
+
+test "boolean operators and literals" {
+    try expectPython("ok <- NOT done AND (x > 1 OR TRUE)\n", "ok = not done and (x > 1 or True)\n");
+    try expectPython("ok <- FALSE\n", "ok = False\n");
+}
+
+test "and binds tighter than or" {
+    try expectPython("ok <- a OR b AND c\n", "ok = a or b and c\n");
+}
+
+test "boolean operator words in strings are untouched" {
+    try expectPython("ok <- s = \"A AND B\"\n", "ok = s == \"A AND B\"\n");
 }
 
 test "missing arrow is reported with its line" {
