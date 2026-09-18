@@ -94,11 +94,46 @@ const Translator = struct {
             .identifier => try self.translateAssignment(),
             .kw_output => try self.translateOutput(),
             .kw_input => try self.translateInput(),
+            .kw_if => try self.translateIf(),
             else => {
                 const found = try self.describe(token);
                 return self.fail(token, "unexpected {s}, expected a statement", .{found});
             },
         }
+    }
+
+    fn atAny(self: *Translator, kinds: []const TokenKind) bool {
+        for (kinds) |kind| {
+            if (self.check(kind)) return true;
+        }
+        return false;
+    }
+
+    // Translates statements one indent level deeper until one of the
+    // `closers` tokens is next. The closer itself is left for the caller.
+    fn translateBlock(self: *Translator, closers: []const TokenKind, closerName: []const u8) TranslateError!void {
+        self.indentLevel += 1;
+        self.skipNewlines();
+        while (!self.atAny(closers)) {
+            if (self.check(.eof)) {
+                return self.fail(self.current(), "expected {s} before the end of the file", .{closerName});
+            }
+            try self.translateStatement();
+            self.skipNewlines();
+        }
+        self.indentLevel -= 1;
+    }
+
+    fn translateIf(self: *Translator) TranslateError!void {
+        _ = self.advance(); // IF
+        const condition = try self.parseExpression();
+        _ = try self.expect(.kw_then, "THEN after the condition");
+        try self.endOfStatement();
+        try self.emit(try std.fmt.allocPrint(self.arena, "if {s}:", .{condition}));
+
+        try self.translateBlock(&.{.kw_endif}, "ENDIF");
+        _ = self.advance(); // ENDIF
+        try self.endOfStatement();
     }
 
     fn translateAssignment(self: *Translator) TranslateError!void {
@@ -411,6 +446,21 @@ test "and binds tighter than or" {
 
 test "boolean operator words in strings are untouched" {
     try expectPython("ok <- s = \"A AND B\"\n", "ok = s == \"A AND B\"\n");
+}
+
+test "if statement indents its body" {
+    try expectPython(
+        "IF x > 5 THEN\n  OUTPUT \"big\"\nENDIF\nOUTPUT \"done\"\n",
+        "if x > 5:\n    print(\"big\")\nprint(\"done\")\n",
+    );
+}
+
+test "if without THEN" {
+    try expectError("IF x > 5\nENDIF\n", 1, "expected THEN after the condition but found end of line");
+}
+
+test "if without ENDIF" {
+    try expectError("IF x > 5 THEN\nOUTPUT x\n", 3, "expected ENDIF before the end of the file");
 }
 
 test "missing arrow is reported with its line" {
