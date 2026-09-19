@@ -131,7 +131,14 @@ const Translator = struct {
         try self.endOfStatement();
         try self.emit(try std.fmt.allocPrint(self.arena, "if {s}:", .{condition}));
 
-        try self.translateBlock(&.{.kw_endif}, "ENDIF");
+        try self.translateBlock(&.{ .kw_else, .kw_endif }, "ENDIF");
+
+        if (self.check(.kw_else)) {
+            _ = self.advance(); // ELSE
+            try self.endOfStatement();
+            try self.emit("else:");
+            try self.translateBlock(&.{.kw_endif}, "ENDIF");
+        }
         _ = self.advance(); // ENDIF
         try self.endOfStatement();
     }
@@ -452,6 +459,13 @@ test "if statement indents its body" {
     try expectPython(
         "IF x > 5 THEN\n  OUTPUT \"big\"\nENDIF\nOUTPUT \"done\"\n",
         "if x > 5:\n    print(\"big\")\nprint(\"done\")\n",
+    );
+}
+
+test "else branch" {
+    try expectPython(
+        "IF x > 5 THEN\n  OUTPUT \"big\"\nELSE\n  OUTPUT \"small\"\nENDIF\n",
+        "if x > 5:\n    print(\"big\")\nelse:\n    print(\"small\")\n",
     );
 }
 
