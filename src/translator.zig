@@ -113,6 +113,7 @@ const Translator = struct {
     // `closers` tokens is next. The closer itself is left for the caller.
     fn translateBlock(self: *Translator, closers: []const TokenKind, closerName: []const u8) TranslateError!void {
         self.indentLevel += 1;
+        const outputBefore = self.output.items.len;
         self.skipNewlines();
         while (!self.atAny(closers)) {
             if (self.check(.eof)) {
@@ -121,6 +122,8 @@ const Translator = struct {
             try self.translateStatement();
             self.skipNewlines();
         }
+        // python does not allow an empty block
+        if (self.output.items.len == outputBefore) try self.emit("pass");
         self.indentLevel -= 1;
     }
 
@@ -480,6 +483,13 @@ test "if nested in an else branch gives an else-if chain" {
     try expectPython(
         "IF x = 1 THEN\n  OUTPUT \"one\"\nELSE\n  IF x = 2 THEN\n    OUTPUT \"two\"\n  ELSE\n    OUTPUT \"many\"\n  ENDIF\nENDIF\n",
         "if x == 1:\n    print(\"one\")\nelse:\n    if x == 2:\n        print(\"two\")\n    else:\n        print(\"many\")\n",
+    );
+}
+
+test "empty blocks get a pass statement" {
+    try expectPython(
+        "IF x THEN\nELSE\n  OUTPUT 1\nENDIF\n",
+        "if x:\n    pass\nelse:\n    print(1)\n",
     );
 }
 
