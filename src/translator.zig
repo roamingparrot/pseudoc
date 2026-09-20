@@ -53,11 +53,22 @@ const Translator = struct {
         return error.SyntaxError;
     }
 
-    fn expect(self: *Translator, kind: TokenKind, what: []const u8) TranslateError!Token {
-        if (!self.check(kind)) {
-            const found = try self.describe(self.current());
-            return self.fail(self.current(), "expected {s} but found {s}", .{ what, found });
+    // Error for a token that cannot start whatever is being parsed. Bad
+    // characters and unterminated strings get a message of their own.
+    fn failUnexpected(self: *Translator, token: Token, expectation: []const u8) TranslateError {
+        if (token.kind == .invalid) {
+            const first = token.text[0];
+            if (first == '"' or first == '\'') {
+                return self.fail(token, "unterminated string literal", .{});
+            }
+            return self.fail(token, "unexpected character '{s}'", .{token.text});
         }
+        const found = try self.describe(token);
+        return self.fail(token, "expected {s} but found {s}", .{ expectation, found });
+    }
+
+    fn expect(self: *Translator, kind: TokenKind, what: []const u8) TranslateError!Token {
+        if (!self.check(kind)) return self.failUnexpected(self.current(), what);
         return self.advance();
     }
 
@@ -74,6 +85,8 @@ const Translator = struct {
     fn endOfStatement(self: *Translator) TranslateError!void {
         if (self.check(.newline)) {
             _ = self.advance();
+        } else if (self.check(.invalid)) {
+            return self.failUnexpected(self.current(), "the end of the statement");
         } else if (!self.check(.eof)) {
             const found = try self.describe(self.current());
             return self.fail(self.current(), "unexpected {s} at the end of the statement", .{found});
@@ -95,10 +108,10 @@ const Translator = struct {
             .kw_output => try self.translateOutput(),
             .kw_input => try self.translateInput(),
             .kw_if => try self.translateIf(),
-            else => {
-                const found = try self.describe(token);
-                return self.fail(token, "unexpected {s}, expected a statement", .{found});
+            .kw_else, .kw_endif => {
+                return self.fail(token, "{s} without a matching IF", .{token.text});
             },
+            else => return self.failUnexpected(token, "a statement"),
         }
     }
 
@@ -111,13 +124,13 @@ const Translator = struct {
 
     // Translates statements one indent level deeper until one of the
     // `closers` tokens is next. The closer itself is left for the caller.
-    fn translateBlock(self: *Translator, closers: []const TokenKind, closerName: []const u8) TranslateError!void {
+    fn translateBlock(self: *Translator, opener: Token, closers: []const TokenKind, closerName: []const u8) TranslateError!void {
         self.indentLevel += 1;
         const outputBefore = self.output.items.len;
         self.skipNewlines();
         while (!self.atAny(closers)) {
             if (self.check(.eof)) {
-                return self.fail(self.current(), "expected {s} before the end of the file", .{closerName});
+                return self.fail(self.current(), "{s} on line {d} is missing its {s}", .{ opener.text, opener.line, closerName });
             }
             try self.translateStatement();
             self.skipNewlines();
@@ -128,19 +141,19 @@ const Translator = struct {
     }
 
     fn translateIf(self: *Translator) TranslateError!void {
-        _ = self.advance(); // IF
+        const ifToken = self.advance();
         const condition = try self.parseExpression();
         _ = try self.expect(.kw_then, "THEN after the condition");
         try self.endOfStatement();
         try self.emit(try std.fmt.allocPrint(self.arena, "if {s}:", .{condition}));
 
-        try self.translateBlock(&.{ .kw_else, .kw_endif }, "ENDIF");
+        try self.translateBlock(ifToken, &.{ .kw_else, .kw_endif }, "ENDIF");
 
         if (self.check(.kw_else)) {
             _ = self.advance(); // ELSE
             try self.endOfStatement();
             try self.emit("else:");
-            try self.translateBlock(&.{.kw_endif}, "ENDIF");
+            try self.translateBlock(ifToken, &.{.kw_endif}, "ENDIF");
         }
         _ = self.advance(); // ENDIF
         try self.endOfStatement();
@@ -326,10 +339,7 @@ const Translator = struct {
                 _ = try self.expect(.r_paren, "')'");
                 return std.fmt.allocPrint(self.arena, "({s})", .{inner});
             },
-            else => {
-                const found = try self.describe(token);
-                return self.fail(token, "expected a value but found {s}", .{found});
-            },
+            else => return self.failUnexpected(token, "a value"),
         }
     }
 };
@@ -497,8 +507,21 @@ test "if without THEN" {
     try expectError("IF x > 5\nENDIF\n", 1, "expected THEN after the condition but found end of line");
 }
 
-test "if without ENDIF" {
-    try expectError("IF x > 5 THEN\nOUTPUT x\n", 3, "expected ENDIF before the end of the file");
+test "if without ENDIF names the line of the IF" {
+    try expectError("IF x > 5 THEN\nOUTPUT x\n", 3, "IF on line 1 is missing its ENDIF");
+}
+
+test "else and endif on their own" {
+    try expectError("x <- 1\nENDIF\n", 2, "ENDIF without a matching IF");
+    try expectError("ELSE\n", 1, "ELSE without a matching IF");
+}
+
+test "unterminated string" {
+    try expectError("OUTPUT \"oops\n", 1, "unterminated string literal");
+}
+
+test "unexpected character" {
+    try expectError("x <- 3 @ 4\n", 1, "unexpected character '@'");
 }
 
 test "missing arrow is reported with its line" {
