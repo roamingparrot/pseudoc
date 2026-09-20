@@ -469,6 +469,20 @@ test "else branch" {
     );
 }
 
+test "nested if inside if" {
+    try expectPython(
+        "IF a THEN\n  IF b THEN\n    OUTPUT 1\n  ELSE\n    OUTPUT 2\n  ENDIF\nELSE\n  OUTPUT 3\nENDIF\nOUTPUT 4\n",
+        "if a:\n    if b:\n        print(1)\n    else:\n        print(2)\nelse:\n    print(3)\nprint(4)\n",
+    );
+}
+
+test "if nested in an else branch gives an else-if chain" {
+    try expectPython(
+        "IF x = 1 THEN\n  OUTPUT \"one\"\nELSE\n  IF x = 2 THEN\n    OUTPUT \"two\"\n  ELSE\n    OUTPUT \"many\"\n  ENDIF\nENDIF\n",
+        "if x == 1:\n    print(\"one\")\nelse:\n    if x == 2:\n        print(\"two\")\n    else:\n        print(\"many\")\n",
+    );
+}
+
 test "if without THEN" {
     try expectError("IF x > 5\nENDIF\n", 1, "expected THEN after the condition but found end of line");
 }
