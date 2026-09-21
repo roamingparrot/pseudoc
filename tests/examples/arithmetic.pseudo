@@ -1,0 +1,11 @@
+a <- 17
+b <- 5
+OUTPUT a + b
+OUTPUT a - b
+OUTPUT a * b
+OUTPUT a / 2
+OUTPUT a DIV b
+OUTPUT a MOD b
+OUTPUT 2 ^ 10
+OUTPUT (a + b) * 2 - 1
+OUTPUT -a + 1

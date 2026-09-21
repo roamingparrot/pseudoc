@@ -1,0 +1,6 @@
+x <- 5
+OUTPUT x = 5
+OUTPUT x <> 5
+OUTPUT x < 6 AND x >= 5
+OUTPUT NOT (x > 3) OR x = 5
+OUTPUT TRUE AND FALSE

@@ -1,0 +1,4 @@
+OUTPUT "a <> b AND c MOD 2"
+OUTPUT "C:\new folder"
+OUTPUT 'x'
+OUTPUT "x <- 1"

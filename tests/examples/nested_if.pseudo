@@ -1,0 +1,11 @@
+mark <- 85
+IF mark >= 50 THEN
+    IF mark >= 80 THEN
+        OUTPUT "distinction"
+    ELSE
+        OUTPUT "pass"
+    ENDIF
+ELSE
+    OUTPUT "fail"
+ENDIF
+OUTPUT "done"

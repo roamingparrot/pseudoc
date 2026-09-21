@@ -24,4 +24,10 @@ pub fn build(b: *std.Build) void {
     const run_exe_tests = b.addRunArtifact(exe_tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_exe_tests.step);
+
+    // transpile every example, run the python it produces and compare output
+    const examples_cmd = b.addSystemCommand(&.{ "python3", "tests/run_examples.py" });
+    examples_cmd.addArtifactArg(exe);
+    const examples_step = b.step("examples", "Run the integration tests in tests/");
+    examples_step.dependOn(&examples_cmd.step);
 }

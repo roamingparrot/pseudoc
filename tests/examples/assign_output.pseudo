@@ -1,0 +1,5 @@
+// simple assignment and output
+x <- 10
+name <- "Ada"
+OUTPUT x
+OUTPUT "Hello, ", name

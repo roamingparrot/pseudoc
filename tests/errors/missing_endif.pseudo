@@ -1,0 +1,2 @@
+IF x > 1 THEN
+OUTPUT x
