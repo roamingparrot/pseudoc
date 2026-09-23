@@ -161,6 +161,25 @@ const Translator = struct {
         try self.endOfStatement();
     }
 
+    fn isIntegerText(text: []const u8) bool {
+        if (text.len == 0) return false;
+        for (text) |c| {
+            if (c < '0' or c > '9') return false;
+        }
+        return true;
+    }
+
+    // Python text for "bound + 1". A plain number is added up directly so
+    // the generated code reads range(1, 11) instead of range(1, 10 + 1).
+    fn oneMore(self: *Translator, bound: []const u8) ![]const u8 {
+        if (isIntegerText(bound)) {
+            if (std.fmt.parseInt(u64, bound, 10)) |value| {
+                return std.fmt.allocPrint(self.arena, "{d}", .{value + 1});
+            } else |_| {}
+        }
+        return std.fmt.allocPrint(self.arena, "{s} + 1", .{bound});
+    }
+
     // FOR i <- 1 TO 10 includes 10, but range() stops before its end value,
     // so the generated range ends one past the CIE upper bound.
     fn translateFor(self: *Translator) TranslateError!void {
@@ -172,7 +191,7 @@ const Translator = struct {
         const end = try self.parseExpression();
         try self.endOfStatement();
 
-        const header = try std.fmt.allocPrint(self.arena, "for {s} in range({s}, {s} + 1):", .{ variable.text, start, end });
+        const header = try std.fmt.allocPrint(self.arena, "for {s} in range({s}, {s}):", .{ variable.text, start, try self.oneMore(end) });
         try self.emit(header);
 
         try self.translateBlock(forToken, &.{.kw_next}, "NEXT");
@@ -530,6 +549,14 @@ test "for loop includes its upper bound" {
         "FOR i <- 1 TO n\n  OUTPUT i\nNEXT i\n",
         "for i in range(1, n + 1):\n    print(i)\n",
     );
+}
+
+test "literal upper bound is folded into the range" {
+    try expectPython("FOR i <- 1 TO 10\n  OUTPUT i\nNEXT i\n", "for i in range(1, 11):\n    print(i)\n");
+}
+
+test "computed upper bound keeps the expression" {
+    try expectPython("FOR i <- 0 TO n - 1\n  OUTPUT i\nNEXT i\n", "for i in range(0, n - 1 + 1):\n    print(i)\n");
 }
 
 test "next may leave out the variable" {

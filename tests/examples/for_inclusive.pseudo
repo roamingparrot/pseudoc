@@ -1,0 +1,15 @@
+// both bounds are included
+FOR i <- 1 TO 5
+    OUTPUT i
+NEXT i
+total <- 0
+FOR n <- 1 TO 100
+    total <- total + n
+NEXT n
+OUTPUT "total ", total
+FOR k <- 3 TO 3
+    OUTPUT "once ", k
+NEXT k
+FOR j <- 5 TO 1
+    OUTPUT "never"
+NEXT j
