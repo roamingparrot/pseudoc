@@ -108,9 +108,11 @@ const Translator = struct {
             .kw_output => try self.translateOutput(),
             .kw_input => try self.translateInput(),
             .kw_if => try self.translateIf(),
+            .kw_for => try self.translateFor(),
             .kw_else, .kw_endif => {
                 return self.fail(token, "{s} without a matching IF", .{token.text});
             },
+            .kw_next => return self.fail(token, "NEXT without a matching FOR", .{}),
             else => return self.failUnexpected(token, "a statement"),
         }
     }
@@ -156,6 +158,26 @@ const Translator = struct {
             try self.translateBlock(ifToken, &.{.kw_endif}, "ENDIF");
         }
         _ = self.advance(); // ENDIF
+        try self.endOfStatement();
+    }
+
+    // FOR i <- 1 TO 10 includes 10, but range() stops before its end value,
+    // so the generated range ends one past the CIE upper bound.
+    fn translateFor(self: *Translator) TranslateError!void {
+        const forToken = self.advance();
+        const variable = try self.expect(.identifier, "a loop variable after FOR");
+        _ = try self.expect(.arrow, "'<-' or '\u{2190}' after the loop variable");
+        const start = try self.parseExpression();
+        _ = try self.expect(.kw_to, "TO after the start value");
+        const end = try self.parseExpression();
+        try self.endOfStatement();
+
+        const header = try std.fmt.allocPrint(self.arena, "for {s} in range({s}, {s} + 1):", .{ variable.text, start, end });
+        try self.emit(header);
+
+        try self.translateBlock(forToken, &.{.kw_next}, "NEXT");
+        _ = self.advance(); // NEXT
+        if (self.check(.identifier)) _ = self.advance(); // NEXT i
         try self.endOfStatement();
     }
 
@@ -501,6 +523,25 @@ test "empty blocks get a pass statement" {
         "IF x THEN\nELSE\n  OUTPUT 1\nENDIF\n",
         "if x:\n    pass\nelse:\n    print(1)\n",
     );
+}
+
+test "for loop includes its upper bound" {
+    try expectPython(
+        "FOR i <- 1 TO n\n  OUTPUT i\nNEXT i\n",
+        "for i in range(1, n + 1):\n    print(i)\n",
+    );
+}
+
+test "next may leave out the variable" {
+    try expectPython("FOR i <- 1 TO n\n  OUTPUT i\nNEXT\n", "for i in range(1, n + 1):\n    print(i)\n");
+}
+
+test "for without NEXT" {
+    try expectError("FOR i <- 1 TO 3\nOUTPUT i\n", 3, "FOR on line 1 is missing its NEXT");
+}
+
+test "stray next" {
+    try expectError("NEXT i\n", 1, "NEXT without a matching FOR");
 }
 
 test "if without THEN" {
