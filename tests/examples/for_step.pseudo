@@ -1,0 +1,7 @@
+FOR i <- 0 TO 10 STEP 2
+    OUTPUT i
+NEXT i
+// the upper bound is only reached when the step lands on it
+FOR j <- 1 TO 10 STEP 3
+    OUTPUT j
+NEXT j

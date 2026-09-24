@@ -189,9 +189,24 @@ const Translator = struct {
         const start = try self.parseExpression();
         _ = try self.expect(.kw_to, "TO after the start value");
         const end = try self.parseExpression();
+
+        var step: ?[]const u8 = null;
+        if (self.check(.kw_step)) {
+            const stepToken = self.advance();
+            const stepText = try self.parseExpression();
+            if (std.mem.startsWith(u8, stepText, "-")) {
+                return self.fail(stepToken, "negative STEP values are not supported yet", .{});
+            }
+            step = stepText;
+        }
         try self.endOfStatement();
 
-        const header = try std.fmt.allocPrint(self.arena, "for {s} in range({s}, {s}):", .{ variable.text, start, try self.oneMore(end) });
+        var header: []const u8 = undefined;
+        if (step) |stepText| {
+            header = try std.fmt.allocPrint(self.arena, "for {s} in range({s}, {s}, {s}):", .{ variable.text, start, try self.oneMore(end), stepText });
+        } else {
+            header = try std.fmt.allocPrint(self.arena, "for {s} in range({s}, {s}):", .{ variable.text, start, try self.oneMore(end) });
+        }
         try self.emit(header);
 
         try self.translateBlock(forToken, &.{.kw_next}, "NEXT");
@@ -557,6 +572,10 @@ test "literal upper bound is folded into the range" {
 
 test "computed upper bound keeps the expression" {
     try expectPython("FOR i <- 0 TO n - 1\n  OUTPUT i\nNEXT i\n", "for i in range(0, n - 1 + 1):\n    print(i)\n");
+}
+
+test "step with a positive number" {
+    try expectPython("FOR i <- 0 TO 10 STEP 2\n  OUTPUT i\nNEXT i\n", "for i in range(0, 11, 2):\n    print(i)\n");
 }
 
 test "next may leave out the variable" {
