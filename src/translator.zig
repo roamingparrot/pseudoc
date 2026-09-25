@@ -109,9 +109,11 @@ const Translator = struct {
             .kw_input => try self.translateInput(),
             .kw_if => try self.translateIf(),
             .kw_for => try self.translateFor(),
+            .kw_while => try self.translateWhile(),
             .kw_else, .kw_endif => {
                 return self.fail(token, "{s} without a matching IF", .{token.text});
             },
+            .kw_endwhile => return self.fail(token, "ENDWHILE without a matching WHILE", .{}),
             .kw_next => return self.fail(token, "NEXT without a matching FOR", .{}),
             else => return self.failUnexpected(token, "a statement"),
         }
@@ -215,6 +217,18 @@ const Translator = struct {
         try self.translateBlock(forToken, &.{.kw_next}, "NEXT");
         _ = self.advance(); // NEXT
         if (self.check(.identifier)) _ = self.advance(); // NEXT i
+        try self.endOfStatement();
+    }
+
+    fn translateWhile(self: *Translator) TranslateError!void {
+        const whileToken = self.advance();
+        const condition = try self.parseExpression();
+        if (self.check(.kw_do)) _ = self.advance(); // DO is optional
+        try self.endOfStatement();
+        try self.emit(try std.fmt.allocPrint(self.arena, "while {s}:", .{condition}));
+
+        try self.translateBlock(whileToken, &.{.kw_endwhile}, "ENDWHILE");
+        _ = self.advance(); // ENDWHILE
         try self.endOfStatement();
     }
 
@@ -591,6 +605,22 @@ test "descending loop down to zero" {
 
 test "descending loop with a variable bound and a bigger step" {
     try expectPython("FOR i <- n TO low STEP -2\n  OUTPUT i\nNEXT i\n", "for i in range(n, low - 1, -2):\n    print(i)\n");
+}
+
+test "while loop" {
+    try expectPython("WHILE n > 0 DO\n  n <- n - 1\nENDWHILE\n", "while n > 0:\n    n = n - 1\n");
+}
+
+test "while without DO" {
+    try expectPython("WHILE n > 0\n  n <- n - 1\nENDWHILE\n", "while n > 0:\n    n = n - 1\n");
+}
+
+test "while without ENDWHILE" {
+    try expectError("WHILE TRUE DO\nOUTPUT 1\n", 3, "WHILE on line 1 is missing its ENDWHILE");
+}
+
+test "stray endwhile" {
+    try expectError("ENDWHILE\n", 1, "ENDWHILE without a matching WHILE");
 }
 
 test "next may leave out the variable" {

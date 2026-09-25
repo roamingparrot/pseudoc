@@ -1,0 +1,20 @@
+count <- 1
+WHILE count <= 3 DO
+    OUTPUT "count ", count
+    count <- count + 1
+ENDWHILE
+// the condition is checked first so this body never runs
+WHILE count < 0 DO
+    OUTPUT "never"
+ENDWHILE
+n <- 27
+steps <- 0
+WHILE n <> 1 DO
+    IF n MOD 2 = 0 THEN
+        n <- n DIV 2
+    ELSE
+        n <- 3 * n + 1
+    ENDIF
+    steps <- steps + 1
+ENDWHILE
+OUTPUT "collatz steps: ", steps
