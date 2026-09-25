@@ -169,15 +169,17 @@ const Translator = struct {
         return true;
     }
 
-    // Python text for "bound + 1". A plain number is added up directly so
-    // the generated code reads range(1, 11) instead of range(1, 10 + 1).
-    fn oneMore(self: *Translator, bound: []const u8) ![]const u8 {
+    // Python text for "bound + offset" where offset is +1 or -1. A plain
+    // number is added up directly so the generated code reads
+    // range(1, 11) instead of range(1, 10 + 1).
+    fn shiftBound(self: *Translator, bound: []const u8, offset: i64) ![]const u8 {
         if (isIntegerText(bound)) {
-            if (std.fmt.parseInt(u64, bound, 10)) |value| {
-                return std.fmt.allocPrint(self.arena, "{d}", .{value + 1});
+            if (std.fmt.parseInt(i64, bound, 10)) |value| {
+                return std.fmt.allocPrint(self.arena, "{d}", .{value + offset});
             } else |_| {}
         }
-        return std.fmt.allocPrint(self.arena, "{s} + 1", .{bound});
+        const sign: u8 = if (offset > 0) '+' else '-';
+        return std.fmt.allocPrint(self.arena, "{s} {c} 1", .{ bound, sign });
     }
 
     // FOR i <- 1 TO 10 includes 10, but range() stops before its end value,
@@ -192,20 +194,21 @@ const Translator = struct {
 
         var step: ?[]const u8 = null;
         if (self.check(.kw_step)) {
-            const stepToken = self.advance();
-            const stepText = try self.parseExpression();
-            if (std.mem.startsWith(u8, stepText, "-")) {
-                return self.fail(stepToken, "negative STEP values are not supported yet", .{});
-            }
-            step = stepText;
+            _ = self.advance(); // STEP
+            step = try self.parseExpression();
         }
         try self.endOfStatement();
 
+        // a step that starts with a minus counts down, so the range has to
+        // stop one below the bound instead of one above it
+        const countsDown = if (step) |stepText| std.mem.startsWith(u8, stepText, "-") else false;
+        const stop = try self.shiftBound(end, if (countsDown) -1 else 1);
+
         var header: []const u8 = undefined;
         if (step) |stepText| {
-            header = try std.fmt.allocPrint(self.arena, "for {s} in range({s}, {s}, {s}):", .{ variable.text, start, try self.oneMore(end), stepText });
+            header = try std.fmt.allocPrint(self.arena, "for {s} in range({s}, {s}, {s}):", .{ variable.text, start, stop, stepText });
         } else {
-            header = try std.fmt.allocPrint(self.arena, "for {s} in range({s}, {s}):", .{ variable.text, start, try self.oneMore(end) });
+            header = try std.fmt.allocPrint(self.arena, "for {s} in range({s}, {s}):", .{ variable.text, start, stop });
         }
         try self.emit(header);
 
@@ -576,6 +579,18 @@ test "computed upper bound keeps the expression" {
 
 test "step with a positive number" {
     try expectPython("FOR i <- 0 TO 10 STEP 2\n  OUTPUT i\nNEXT i\n", "for i in range(0, 11, 2):\n    print(i)\n");
+}
+
+test "descending loop stops one below its lower bound" {
+    try expectPython("FOR i <- 10 TO 1 STEP -1\n  OUTPUT i\nNEXT i\n", "for i in range(10, 0, -1):\n    print(i)\n");
+}
+
+test "descending loop down to zero" {
+    try expectPython("FOR i <- 5 TO 0 STEP -1\n  OUTPUT i\nNEXT i\n", "for i in range(5, -1, -1):\n    print(i)\n");
+}
+
+test "descending loop with a variable bound and a bigger step" {
+    try expectPython("FOR i <- n TO low STEP -2\n  OUTPUT i\nNEXT i\n", "for i in range(n, low - 1, -2):\n    print(i)\n");
 }
 
 test "next may leave out the variable" {
