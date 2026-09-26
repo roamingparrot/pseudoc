@@ -218,7 +218,12 @@ const Translator = struct {
 
         try self.translateBlock(forToken, &.{.kw_next}, "NEXT");
         _ = self.advance(); // NEXT
-        if (self.check(.identifier)) _ = self.advance(); // NEXT i
+        if (self.check(.identifier)) {
+            const named = self.advance();
+            if (!std.mem.eql(u8, named.text, variable.text)) {
+                return self.fail(named, "NEXT {s} does not match the loop variable {s} from line {d}", .{ named.text, variable.text, forToken.line });
+            }
+        }
         try self.endOfStatement();
     }
 
@@ -657,6 +662,21 @@ test "repeat without UNTIL" {
 
 test "stray until" {
     try expectError("UNTIL x\n", 1, "UNTIL without a matching REPEAT");
+}
+
+test "next with the wrong variable" {
+    try expectError(
+        "FOR i <- 1 TO 3\n  FOR j <- 1 TO 3\n    OUTPUT j\n  NEXT i\nNEXT j\n",
+        4,
+        "NEXT i does not match the loop variable j from line 2",
+    );
+}
+
+test "nested loops of different kinds" {
+    try expectPython(
+        "FOR i <- 1 TO 2\n  WHILE x < i DO\n    x <- x + 1\n  ENDWHILE\nNEXT i\n",
+        "for i in range(1, 3):\n    while x < i:\n        x = x + 1\n",
+    );
 }
 
 test "next may leave out the variable" {
