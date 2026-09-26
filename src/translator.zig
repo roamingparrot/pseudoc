@@ -110,9 +110,11 @@ const Translator = struct {
             .kw_if => try self.translateIf(),
             .kw_for => try self.translateFor(),
             .kw_while => try self.translateWhile(),
+            .kw_repeat => try self.translateRepeat(),
             .kw_else, .kw_endif => {
                 return self.fail(token, "{s} without a matching IF", .{token.text});
             },
+            .kw_until => return self.fail(token, "UNTIL without a matching REPEAT", .{}),
             .kw_endwhile => return self.fail(token, "ENDWHILE without a matching WHILE", .{}),
             .kw_next => return self.fail(token, "NEXT without a matching FOR", .{}),
             else => return self.failUnexpected(token, "a statement"),
@@ -230,6 +232,25 @@ const Translator = struct {
         try self.translateBlock(whileToken, &.{.kw_endwhile}, "ENDWHILE");
         _ = self.advance(); // ENDWHILE
         try self.endOfStatement();
+    }
+
+    // Python has no do-while, so REPEAT becomes an endless loop that
+    // breaks out at the end of the body once the UNTIL condition is true.
+    fn translateRepeat(self: *Translator) TranslateError!void {
+        const repeatToken = self.advance();
+        try self.endOfStatement();
+        try self.emit("while True:");
+
+        try self.translateBlock(repeatToken, &.{.kw_until}, "UNTIL");
+        _ = self.advance(); // UNTIL
+        const condition = try self.parseExpression();
+        try self.endOfStatement();
+
+        self.indentLevel += 1;
+        try self.emit(try std.fmt.allocPrint(self.arena, "if {s}:", .{condition}));
+        self.indentLevel += 1;
+        try self.emit("break");
+        self.indentLevel -= 2;
     }
 
     fn translateAssignment(self: *Translator) TranslateError!void {
@@ -621,6 +642,21 @@ test "while without ENDWHILE" {
 
 test "stray endwhile" {
     try expectError("ENDWHILE\n", 1, "ENDWHILE without a matching WHILE");
+}
+
+test "repeat until breaks when the condition is true" {
+    try expectPython(
+        "REPEAT\n  n <- n + 1\nUNTIL n = 3\n",
+        "while True:\n    n = n + 1\n    if n == 3:\n        break\n",
+    );
+}
+
+test "repeat without UNTIL" {
+    try expectError("REPEAT\nOUTPUT 1\n", 3, "REPEAT on line 1 is missing its UNTIL");
+}
+
+test "stray until" {
+    try expectError("UNTIL x\n", 1, "UNTIL without a matching REPEAT");
 }
 
 test "next may leave out the variable" {

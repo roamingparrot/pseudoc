@@ -1,0 +1,16 @@
+n <- 0
+REPEAT
+    n <- n + 1
+    OUTPUT "n is ", n
+UNTIL n = 3
+// the body always runs once, even if the condition is already true
+REPEAT
+    OUTPUT "ran once"
+UNTIL TRUE
+total <- 0
+i <- 1
+REPEAT
+    total <- total + i
+    i <- i + 1
+UNTIL total > 20
+OUTPUT total
