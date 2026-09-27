@@ -1,0 +1,10 @@
+first <- "Ada"
+last <- "Lovelace"
+full <- first & " " & last
+OUTPUT full
+OUTPUT "fish & chips"
+line <- ""
+FOR i <- 1 TO 4
+    line <- line & "*"
+NEXT i
+OUTPUT line

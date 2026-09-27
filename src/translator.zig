@@ -358,10 +358,12 @@ const Translator = struct {
 
     fn parseAdditive(self: *Translator) TranslateError![]const u8 {
         var left = try self.parseTerm();
-        while (self.check(.plus) or self.check(.minus)) {
+        while (self.check(.plus) or self.check(.minus) or self.check(.ampersand)) {
             const operator = self.advance();
             const right = try self.parseTerm();
-            left = try self.joinBinary(left, operator.text, right);
+            // & joins strings, which is + in python
+            const pythonOperator = if (operator.kind == .ampersand) "+" else operator.text;
+            left = try self.joinBinary(left, pythonOperator, right);
         }
         return left;
     }
@@ -677,6 +679,14 @@ test "nested loops of different kinds" {
         "FOR i <- 1 TO 2\n  WHILE x < i DO\n    x <- x + 1\n  ENDWHILE\nNEXT i\n",
         "for i in range(1, 3):\n    while x < i:\n        x = x + 1\n",
     );
+}
+
+test "ampersand joins strings" {
+    try expectPython("full <- first & \" \" & last\n", "full = first + \" \" + last\n");
+}
+
+test "ampersand inside a string is not an operator" {
+    try expectPython("OUTPUT \"fish & chips\"\n", "print(\"fish & chips\")\n");
 }
 
 test "next may leave out the variable" {
