@@ -186,6 +186,19 @@ const Translator = struct {
         return std.fmt.allocPrint(self.arena, "{s} {c} 1", .{ bound, sign });
     }
 
+    // The range stops one past the bound when counting up and one before it
+    // when counting down. With a literal step the direction is known now;
+    // otherwise python has to work it out from the sign of the step.
+    fn loopStop(self: *Translator, end: []const u8, step: ?[]const u8) ![]const u8 {
+        const stepText = step orelse return self.shiftBound(end, 1);
+
+        if (isIntegerText(stepText)) return self.shiftBound(end, 1);
+        if (std.mem.startsWith(u8, stepText, "-") and isIntegerText(stepText[1..])) {
+            return self.shiftBound(end, -1);
+        }
+        return std.fmt.allocPrint(self.arena, "{s} + (1 if {s} > 0 else -1)", .{ end, stepText });
+    }
+
     // FOR i <- 1 TO 10 includes 10, but range() stops before its end value,
     // so the generated range ends one past the CIE upper bound.
     fn translateFor(self: *Translator) TranslateError!void {
@@ -203,10 +216,7 @@ const Translator = struct {
         }
         try self.endOfStatement();
 
-        // a step that starts with a minus counts down, so the range has to
-        // stop one below the bound instead of one above it
-        const countsDown = if (step) |stepText| std.mem.startsWith(u8, stepText, "-") else false;
-        const stop = try self.shiftBound(end, if (countsDown) -1 else 1);
+        const stop = try self.loopStop(end, step);
 
         var header: []const u8 = undefined;
         if (step) |stepText| {
@@ -687,6 +697,20 @@ test "ampersand joins strings" {
 
 test "ampersand inside a string is not an operator" {
     try expectPython("OUTPUT \"fish & chips\"\n", "print(\"fish & chips\")\n");
+}
+
+test "step held in a variable works out its direction at run time" {
+    try expectPython(
+        "FOR i <- 1 TO 9 STEP s\n  OUTPUT i\nNEXT i\n",
+        "for i in range(1, 9 + (1 if s > 0 else -1), s):\n    print(i)\n",
+    );
+}
+
+test "negated variable is not assumed to be a descending step" {
+    try expectPython(
+        "FOR i <- 1 TO 9 STEP -s\n  OUTPUT i\nNEXT i\n",
+        "for i in range(1, 9 + (1 if -s > 0 else -1), -s):\n    print(i)\n",
+    );
 }
 
 test "next may leave out the variable" {
