@@ -14,6 +14,38 @@ pub const TranslateError = error{ SyntaxError, OutOfMemory };
 
 const indentWidth = 4;
 
+const VarType = enum {
+    integer,
+    real,
+    string,
+    char,
+    boolean,
+
+    fn fromName(name: []const u8) ?VarType {
+        const names = [_]struct { []const u8, VarType }{
+            .{ "INTEGER", .integer },
+            .{ "REAL", .real },
+            .{ "STRING", .string },
+            .{ "CHAR", .char },
+            .{ "BOOLEAN", .boolean },
+        };
+        for (names) |entry| {
+            if (std.mem.eql(u8, name, entry[0])) return entry[1];
+        }
+        return null;
+    }
+
+    // value a freshly declared variable starts with
+    fn defaultValue(self: VarType) []const u8 {
+        return switch (self) {
+            .integer => "0",
+            .real => "0.0",
+            .string, .char => "\"\"",
+            .boolean => "False",
+        };
+    }
+};
+
 const Translator = struct {
     arena: std.mem.Allocator,
     tokens: []const Token,
@@ -21,6 +53,7 @@ const Translator = struct {
     output: std.ArrayList(u8) = .empty,
     indentLevel: usize = 0,
     diagnostic: *Diagnostic,
+    declaredTypes: std.StringHashMapUnmanaged(VarType) = .empty,
 
     fn current(self: *Translator) Token {
         return self.tokens[self.position];
@@ -107,6 +140,7 @@ const Translator = struct {
             .identifier => try self.translateAssignment(),
             .kw_output => try self.translateOutput(),
             .kw_input => try self.translateInput(),
+            .kw_declare => try self.translateDeclare(),
             .kw_if => try self.translateIf(),
             .kw_for => try self.translateFor(),
             .kw_while => try self.translateWhile(),
@@ -275,6 +309,31 @@ const Translator = struct {
         try self.endOfStatement();
         const line = try std.fmt.allocPrint(self.arena, "{s} = {s}", .{ name.text, value });
         try self.emit(line);
+    }
+
+    fn parseTypeName(self: *Translator) TranslateError!VarType {
+        const token = try self.expect(.identifier, "a type name such as INTEGER");
+        return VarType.fromName(token.text) orelse
+            self.fail(token, "unknown type '{s}' (supported: INTEGER, REAL, STRING, CHAR, BOOLEAN)", .{token.text});
+    }
+
+    // DECLARE count : INTEGER   or   DECLARE a, b : REAL
+    fn translateDeclare(self: *Translator) TranslateError!void {
+        _ = self.advance(); // DECLARE
+        var names: std.ArrayList(Token) = .empty;
+        try names.append(self.arena, try self.expect(.identifier, "a variable name after DECLARE"));
+        while (self.check(.comma)) {
+            _ = self.advance();
+            try names.append(self.arena, try self.expect(.identifier, "a variable name"));
+        }
+        _ = try self.expect(.colon, "':' and a type");
+        const varType = try self.parseTypeName();
+        try self.endOfStatement();
+
+        for (names.items) |name| {
+            try self.declaredTypes.put(self.arena, name.text, varType);
+            try self.emit(try std.fmt.allocPrint(self.arena, "{s} = {s}", .{ name.text, varType.defaultValue() }));
+        }
     }
 
     fn translateInput(self: *Translator) TranslateError!void {
@@ -711,6 +770,21 @@ test "negated variable is not assumed to be a descending step" {
         "FOR i <- 1 TO 9 STEP -s\n  OUTPUT i\nNEXT i\n",
         "for i in range(1, 9 + (1 if -s > 0 else -1), -s):\n    print(i)\n",
     );
+}
+
+test "declare gives a default value" {
+    try expectPython(
+        "DECLARE count : INTEGER\nDECLARE name : STRING\nDECLARE flag : BOOLEAN\nDECLARE ratio : REAL\n",
+        "count = 0\nname = \"\"\nflag = False\nratio = 0.0\n",
+    );
+}
+
+test "declare several variables at once" {
+    try expectPython("DECLARE a, b : INTEGER\n", "a = 0\nb = 0\n");
+}
+
+test "declare with an unknown type" {
+    try expectError("DECLARE d : DATE\n", 1, "unknown type 'DATE' (supported: INTEGER, REAL, STRING, CHAR, BOOLEAN)");
 }
 
 test "next may leave out the variable" {
