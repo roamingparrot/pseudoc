@@ -46,6 +46,12 @@ const VarType = enum {
     }
 };
 
+// The left hand side of an assignment or INPUT: a variable or an array element
+const Target = struct {
+    name: Token,
+    text: []const u8,
+};
+
 const Translator = struct {
     arena: std.mem.Allocator,
     tokens: []const Token,
@@ -303,12 +309,33 @@ const Translator = struct {
     }
 
     fn translateAssignment(self: *Translator) TranslateError!void {
-        const name = self.advance();
+        const target = try self.parseTarget("a variable name");
         _ = try self.expect(.arrow, "'<-' or '\u{2190}' after the variable name");
         const value = try self.parseExpression();
         try self.endOfStatement();
-        const line = try std.fmt.allocPrint(self.arena, "{s} = {s}", .{ name.text, value });
+        const line = try std.fmt.allocPrint(self.arena, "{s} = {s}", .{ target.text, value });
         try self.emit(line);
+    }
+
+    // CIE arrays are usually indexed from 1. Arrays are created one element
+    // longer than declared, so the CIE index can be used unchanged and
+    // element 0 is simply never used.
+    fn parseIndexSuffix(self: *Translator, base: []const u8) TranslateError![]const u8 {
+        _ = self.advance(); // [
+        const index = try self.parseExpression();
+        if (self.check(.comma)) {
+            return self.fail(self.current(), "two dimensional arrays are not supported", .{});
+        }
+        _ = try self.expect(.r_bracket, "']' after the index");
+        return std.fmt.allocPrint(self.arena, "{s}[{s}]", .{ base, index });
+    }
+
+    fn parseTarget(self: *Translator, what: []const u8) TranslateError!Target {
+        const name = try self.expect(.identifier, what);
+        if (self.check(.l_bracket)) {
+            return Target{ .name = name, .text = try self.parseIndexSuffix(name.text) };
+        }
+        return Target{ .name = name, .text = name.text };
     }
 
     fn parseTypeName(self: *Translator) TranslateError!VarType {
@@ -327,28 +354,58 @@ const Translator = struct {
             try names.append(self.arena, try self.expect(.identifier, "a variable name"));
         }
         _ = try self.expect(.colon, "':' and a type");
+
+        // an array declaration gives the element type and a size
+        var arraySize: ?[]const u8 = null;
+        if (self.check(.kw_array)) arraySize = try self.parseArrayBounds();
+
         const varType = try self.parseTypeName();
         try self.endOfStatement();
 
         for (names.items) |name| {
+            // an array is remembered by its element type, which is what
+            // INPUT needs when it reads into one element
             try self.declaredTypes.put(self.arena, name.text, varType);
-            try self.emit(try std.fmt.allocPrint(self.arena, "{s} = {s}", .{ name.text, varType.defaultValue() }));
+            const initial = if (arraySize) |size|
+                try std.fmt.allocPrint(self.arena, "[{s}] * {s}", .{ varType.defaultValue(), size })
+            else
+                varType.defaultValue();
+            try self.emit(try std.fmt.allocPrint(self.arena, "{s} = {s}", .{ name.text, initial }));
         }
+    }
+
+    // Reads ARRAY[1:10] OF and returns the python text for the list length.
+    fn parseArrayBounds(self: *Translator) TranslateError![]const u8 {
+        _ = self.advance(); // ARRAY
+        _ = try self.expect(.l_bracket, "'[' after ARRAY");
+        const lower = try self.expect(.integer, "a whole number as the lower bound");
+        _ = try self.expect(.colon, "':' between the array bounds");
+        const upper = try self.parseExpression();
+        if (self.check(.comma)) {
+            return self.fail(self.current(), "two dimensional arrays are not supported", .{});
+        }
+        _ = try self.expect(.r_bracket, "']' after the array bounds");
+        _ = try self.expect(.kw_of, "OF and the element type");
+        _ = lower; // slots below the lower bound are unused, so it needs no code
+
+        const size = try self.shiftBound(upper, 1);
+        if (isIntegerText(size)) return size;
+        return std.fmt.allocPrint(self.arena, "({s})", .{size});
     }
 
     fn translateInput(self: *Translator) TranslateError!void {
         _ = self.advance(); // INPUT
-        const name = try self.expect(.identifier, "a variable name after INPUT");
+        const target = try self.parseTarget("a variable name after INPUT");
         try self.endOfStatement();
 
         // input() always returns text, so numbers need converting. That is
         // only possible when the variable was declared with a type.
-        const reader = switch (self.declaredTypes.get(name.text) orelse .string) {
+        const reader = switch (self.declaredTypes.get(target.name.text) orelse .string) {
             .integer => "int(input())",
             .real => "float(input())",
             else => "input()",
         };
-        const line = try std.fmt.allocPrint(self.arena, "{s} = {s}", .{ name.text, reader });
+        const line = try std.fmt.allocPrint(self.arena, "{s} = {s}", .{ target.text, reader });
         try self.emit(line);
     }
 
@@ -499,8 +556,13 @@ const Translator = struct {
                 _ = self.advance();
                 return self.pythonString(token.text);
             },
-            .integer, .real, .identifier => {
+            .integer, .real => {
                 _ = self.advance();
+                return token.text;
+            },
+            .identifier => {
+                _ = self.advance();
+                if (self.check(.l_bracket)) return self.parseIndexSuffix(token.text);
                 return token.text;
             },
             .kw_true => {
@@ -805,6 +867,38 @@ test "declare several variables at once" {
 
 test "declare with an unknown type" {
     try expectError("DECLARE d : DATE\n", 1, "unknown type 'DATE' (supported: INTEGER, REAL, STRING, CHAR, BOOLEAN)");
+}
+
+test "declare an array" {
+    try expectPython("DECLARE marks : ARRAY[1:5] OF INTEGER\n", "marks = [0] * 6\n");
+}
+
+test "declare an array of strings with a variable size" {
+    try expectPython("DECLARE names : ARRAY[1:n] OF STRING\n", "names = [\"\"] * (n + 1)\n");
+}
+
+test "array elements can be assigned and read" {
+    try expectPython("marks[2] <- marks[1] + 1\n", "marks[2] = marks[1] + 1\n");
+}
+
+test "array index can be an expression" {
+    try expectPython("x <- marks[i + 1] * 2\n", "x = marks[i + 1] * 2\n");
+}
+
+test "input into an array element uses the element type" {
+    try expectPython(
+        "DECLARE marks : ARRAY[1:3] OF INTEGER\nINPUT marks[2]\n",
+        "marks = [0] * 4\nmarks[2] = int(input())\n",
+    );
+}
+
+test "two dimensional arrays are rejected" {
+    try expectError("DECLARE grid : ARRAY[1:3, 1:3] OF INTEGER\n", 1, "two dimensional arrays are not supported");
+    try expectError("x <- grid[1, 2]\n", 1, "two dimensional arrays are not supported");
+}
+
+test "array index is missing its bracket" {
+    try expectError("x <- marks[1\n", 1, "expected ']' after the index but found end of line");
 }
 
 test "next may leave out the variable" {
