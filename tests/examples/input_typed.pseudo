@@ -1,0 +1,13 @@
+DECLARE age : INTEGER
+DECLARE price : REAL
+DECLARE name : STRING
+INPUT name
+INPUT age
+INPUT price
+OUTPUT name, " is ", age + 1, " next year"
+OUTPUT price * 2
+IF age >= 18 THEN
+    OUTPUT "adult"
+ELSE
+    OUTPUT "child"
+ENDIF

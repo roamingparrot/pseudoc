@@ -340,7 +340,15 @@ const Translator = struct {
         _ = self.advance(); // INPUT
         const name = try self.expect(.identifier, "a variable name after INPUT");
         try self.endOfStatement();
-        const line = try std.fmt.allocPrint(self.arena, "{s} = input()", .{name.text});
+
+        // input() always returns text, so numbers need converting. That is
+        // only possible when the variable was declared with a type.
+        const reader = switch (self.declaredTypes.get(name.text) orelse .string) {
+            .integer => "int(input())",
+            .real => "float(input())",
+            else => "input()",
+        };
+        const line = try std.fmt.allocPrint(self.arena, "{s} = {s}", .{ name.text, reader });
         try self.emit(line);
     }
 
@@ -578,6 +586,18 @@ test "output without a value is an error" {
 
 test "input reads into a variable" {
     try expectPython("INPUT name\n", "name = input()\n");
+}
+
+test "input into a declared integer is converted" {
+    try expectPython("DECLARE age : INTEGER\nINPUT age\n", "age = 0\nage = int(input())\n");
+}
+
+test "input into a declared real is converted" {
+    try expectPython("DECLARE price : REAL\nINPUT price\n", "price = 0.0\nprice = float(input())\n");
+}
+
+test "input into a declared string stays text" {
+    try expectPython("DECLARE name : STRING\nINPUT name\n", "name = \"\"\nname = input()\n");
 }
 
 test "input needs a variable name" {
