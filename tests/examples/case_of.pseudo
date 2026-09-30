@@ -1,0 +1,18 @@
+FOR n <- 1 TO 4
+    CASE OF n
+        1 : OUTPUT "one"
+        2 : OUTPUT "two"
+        3 :
+            OUTPUT "three"
+            OUTPUT "(a crowd)"
+        OTHERWISE : OUTPUT "other"
+    ENDCASE
+NEXT n
+grade <- "B"
+CASE OF grade
+    "A" : OUTPUT "top"
+    "B" : OUTPUT "good"
+ENDCASE
+CASE OF 7 MOD 4
+    3 : OUTPUT "remainder three"
+ENDCASE

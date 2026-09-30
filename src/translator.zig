@@ -151,9 +151,12 @@ const Translator = struct {
             .kw_for => try self.translateFor(),
             .kw_while => try self.translateWhile(),
             .kw_repeat => try self.translateRepeat(),
+            .kw_case => try self.translateCase(),
             .kw_else, .kw_endif => {
                 return self.fail(token, "{s} without a matching IF", .{token.text});
             },
+            .kw_endcase => return self.fail(token, "ENDCASE without a matching CASE", .{}),
+            .kw_otherwise => return self.fail(token, "OTHERWISE outside of a CASE statement", .{}),
             .kw_until => return self.fail(token, "UNTIL without a matching REPEAT", .{}),
             .kw_endwhile => return self.fail(token, "ENDWHILE without a matching WHILE", .{}),
             .kw_next => return self.fail(token, "NEXT without a matching FOR", .{}),
@@ -306,6 +309,62 @@ const Translator = struct {
         self.indentLevel += 1;
         try self.emit("break");
         self.indentLevel -= 2;
+    }
+
+    // Tokens that end the statements of one CASE branch: the start of the
+    // next branch (a value or OTHERWISE) or ENDCASE. No statement can start
+    // with a value, so this is unambiguous.
+    const caseBranchEnd = [_]TokenKind{ .integer, .real, .string, .minus, .kw_true, .kw_false, .kw_otherwise, .kw_endcase };
+
+    fn isPlainName(text: []const u8) bool {
+        for (text) |c| {
+            const isNameChar = std.ascii.isAlphanumeric(c) or c == '_' or c == '[' or c == ']';
+            if (!isNameChar) return false;
+        }
+        return text.len > 0;
+    }
+
+    // CASE OF x becomes an if / elif / else chain comparing x with each value
+    fn translateCase(self: *Translator) TranslateError!void {
+        const caseToken = self.advance();
+        _ = try self.expect(.kw_of, "OF after CASE");
+        var selector = try self.parseExpression();
+        try self.endOfStatement();
+
+        // an expression is worked out once instead of in every comparison
+        if (!isPlainName(selector)) {
+            try self.emit(try std.fmt.allocPrint(self.arena, "_caseValue = {s}", .{selector}));
+            selector = "_caseValue";
+        }
+
+        self.skipNewlines();
+        var isFirstBranch = true;
+        while (!self.check(.kw_endcase)) {
+            if (self.check(.eof)) {
+                return self.fail(self.current(), "CASE on line {d} is missing its ENDCASE", .{caseToken.line});
+            }
+
+            if (self.check(.kw_otherwise)) {
+                _ = self.advance(); // OTHERWISE
+                if (self.check(.colon)) _ = self.advance();
+                try self.emit(if (isFirstBranch) "if True:" else "else:");
+                try self.translateBlock(caseToken, &caseBranchEnd, "ENDCASE");
+                if (!self.check(.kw_endcase)) {
+                    return self.fail(self.current(), "OTHERWISE must be the last branch of the CASE", .{});
+                }
+                break;
+            }
+
+            if (!self.atAny(&caseBranchEnd)) return self.failUnexpected(self.current(), "a case value or OTHERWISE");
+            const value = try self.parseAdditive();
+            _ = try self.expect(.colon, "':' after the case value");
+            const keyword = if (isFirstBranch) "if" else "elif";
+            try self.emit(try std.fmt.allocPrint(self.arena, "{s} {s} == {s}:", .{ keyword, selector, value }));
+            isFirstBranch = false;
+            try self.translateBlock(caseToken, &caseBranchEnd, "ENDCASE");
+        }
+        _ = self.advance(); // ENDCASE
+        try self.endOfStatement();
     }
 
     fn translateAssignment(self: *Translator) TranslateError!void {
@@ -899,6 +958,47 @@ test "two dimensional arrays are rejected" {
 
 test "array index is missing its bracket" {
     try expectError("x <- marks[1\n", 1, "expected ']' after the index but found end of line");
+}
+
+test "case becomes an if elif else chain" {
+    try expectPython(
+        "CASE OF x\n  1 : OUTPUT \"one\"\n  2 : OUTPUT \"two\"\n  OTHERWISE : OUTPUT \"many\"\nENDCASE\n",
+        "if x == 1:\n    print(\"one\")\nelif x == 2:\n    print(\"two\")\nelse:\n    print(\"many\")\n",
+    );
+}
+
+test "case branch with several statements" {
+    try expectPython(
+        "CASE OF c\n  'a' :\n    OUTPUT 1\n    OUTPUT 2\n  'b' : OUTPUT 3\nENDCASE\n",
+        "if c == 'a':\n    print(1)\n    print(2)\nelif c == 'b':\n    print(3)\n",
+    );
+}
+
+test "case on an expression evaluates it once" {
+    try expectPython(
+        "CASE OF n MOD 3\n  0 : OUTPUT 0\nENDCASE\n",
+        "_caseValue = n % 3\nif _caseValue == 0:\n    print(0)\n",
+    );
+}
+
+test "case on a string" {
+    try expectPython("CASE OF s\n  \"hi\" : OUTPUT 1\nENDCASE\n", "if s == \"hi\":\n    print(1)\n");
+}
+
+test "case without ENDCASE" {
+    try expectError("CASE OF x\n  1 : OUTPUT 1\n", 3, "CASE on line 1 is missing its ENDCASE");
+}
+
+test "otherwise must come last" {
+    try expectError("CASE OF x\n  OTHERWISE : OUTPUT 1\n  2 : OUTPUT 2\nENDCASE\n", 3, "OTHERWISE must be the last branch of the CASE");
+}
+
+test "case value must be a literal" {
+    try expectError("CASE OF x\n  y : OUTPUT 1\nENDCASE\n", 2, "expected a case value or OTHERWISE but found 'y'");
+}
+
+test "stray endcase" {
+    try expectError("ENDCASE\n", 1, "ENDCASE without a matching CASE");
 }
 
 test "next may leave out the variable" {
