@@ -1,0 +1,30 @@
+DECLARE total : INTEGER
+
+PROCEDURE Greet(name : STRING)
+    OUTPUT "Hello, ", name
+ENDPROCEDURE
+
+PROCEDURE Stars(count : INTEGER)
+    DECLARE line : STRING
+    line <- ""
+    FOR i <- 1 TO count
+        line <- line & "*"
+    NEXT i
+    OUTPUT line
+ENDPROCEDURE
+
+PROCEDURE AddToTotal(amount : INTEGER)
+    total <- total + amount
+ENDPROCEDURE
+
+PROCEDURE Banner
+    CALL Stars(5)
+    CALL Greet("world")
+    CALL Stars(5)
+ENDPROCEDURE
+
+total <- 10
+CALL Banner
+CALL AddToTotal(5)
+CALL AddToTotal(7)
+OUTPUT "total ", total

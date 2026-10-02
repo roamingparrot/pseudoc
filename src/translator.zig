@@ -52,6 +52,8 @@ const Target = struct {
     text: []const u8,
 };
 
+const RoutineKind = enum { none, procedure, function };
+
 const Translator = struct {
     arena: std.mem.Allocator,
     tokens: []const Token,
@@ -60,6 +62,13 @@ const Translator = struct {
     indentLevel: usize = 0,
     diagnostic: *Diagnostic,
     declaredTypes: std.StringHashMapUnmanaged(VarType) = .empty,
+
+    // State for the procedure or function being translated. A name that is
+    // assigned inside a routine but is not a parameter or declared there
+    // must belong to the main program, so python needs a "global" line.
+    routineKind: RoutineKind = .none,
+    routineLocals: std.StringHashMapUnmanaged(void) = .empty,
+    routineAssigned: std.ArrayList([]const u8) = .empty,
 
     fn current(self: *Translator) Token {
         return self.tokens[self.position];
@@ -152,9 +161,12 @@ const Translator = struct {
             .kw_while => try self.translateWhile(),
             .kw_repeat => try self.translateRepeat(),
             .kw_case => try self.translateCase(),
+            .kw_procedure => try self.translateProcedure(),
+            .kw_call => try self.translateCall(),
             .kw_else, .kw_endif => {
                 return self.fail(token, "{s} without a matching IF", .{token.text});
             },
+            .kw_endprocedure => return self.fail(token, "ENDPROCEDURE without a matching PROCEDURE", .{}),
             .kw_endcase => return self.fail(token, "ENDCASE without a matching CASE", .{}),
             .kw_otherwise => return self.fail(token, "OTHERWISE outside of a CASE statement", .{}),
             .kw_until => return self.fail(token, "UNTIL without a matching REPEAT", .{}),
@@ -251,6 +263,7 @@ const Translator = struct {
         const start = try self.parseExpression();
         _ = try self.expect(.kw_to, "TO after the start value");
         const end = try self.parseExpression();
+        try self.noteAssigned(Target{ .name = variable, .text = variable.text });
 
         var step: ?[]const u8 = null;
         if (self.check(.kw_step)) {
@@ -389,11 +402,124 @@ const Translator = struct {
         try self.endOfStatement();
     }
 
+    fn noteAssigned(self: *Translator, target: Target) !void {
+        if (self.routineKind == .none) return;
+        // assigning to an element changes the list but does not rebind the name
+        if (!std.mem.eql(u8, target.text, target.name.text)) return;
+        for (self.routineAssigned.items) |known| {
+            if (std.mem.eql(u8, known, target.text)) return;
+        }
+        try self.routineAssigned.append(self.arena, target.text);
+    }
+
+    // "name : TYPE" pairs inside brackets, returned as python parameter text
+    fn parseParameters(self: *Translator) TranslateError![]const u8 {
+        if (!self.check(.l_paren)) return "";
+        _ = self.advance(); // (
+        var parameters: std.ArrayList(u8) = .empty;
+
+        while (!self.check(.r_paren)) {
+            if (parameters.items.len > 0) {
+                _ = try self.expect(.comma, "',' or ')' after the parameter");
+                try parameters.appendSlice(self.arena, ", ");
+            }
+            if (self.check(.kw_byref)) {
+                return self.fail(self.current(), "BYREF parameters are not supported", .{});
+            }
+            if (self.check(.kw_byval)) _ = self.advance();
+
+            const name = try self.expect(.identifier, "a parameter name");
+            _ = try self.expect(.colon, "':' and a type after the parameter name");
+            if (self.check(.kw_array)) _ = try self.parseArrayBounds();
+            const varType = try self.parseTypeName();
+
+            try self.declaredTypes.put(self.arena, name.text, varType);
+            try self.routineLocals.put(self.arena, name.text, {});
+            try parameters.appendSlice(self.arena, name.text);
+        }
+        _ = self.advance(); // )
+        return parameters.items;
+    }
+
+    // Starts a procedure or function. Declarations made inside it are
+    // forgotten again by finishRoutine, so the returned copy of the types
+    // known so far is needed there.
+    fn beginRoutine(self: *Translator, kind: RoutineKind, keyword: Token) TranslateError!std.StringHashMapUnmanaged(VarType) {
+        if (self.routineKind != .none) {
+            return self.fail(keyword, "a {s} cannot be defined inside another procedure or function", .{keyword.text});
+        }
+        self.routineKind = kind;
+        return self.declaredTypes.clone(self.arena);
+    }
+
+    // `bodyStart` is where the routine's first line went in the output, which
+    // is where the global statement has to be inserted.
+    fn finishRoutine(self: *Translator, savedTypes: std.StringHashMapUnmanaged(VarType), bodyStart: usize) TranslateError!void {
+        var globals: std.ArrayList(u8) = .empty;
+        for (self.routineAssigned.items) |name| {
+            if (self.routineLocals.contains(name)) continue;
+            if (globals.items.len > 0) try globals.appendSlice(self.arena, ", ");
+            try globals.appendSlice(self.arena, name);
+        }
+        if (globals.items.len > 0) {
+            var line: std.ArrayList(u8) = .empty;
+            try line.appendNTimes(self.arena, ' ', (self.indentLevel + 1) * indentWidth);
+            try line.appendSlice(self.arena, "global ");
+            try line.appendSlice(self.arena, globals.items);
+            try line.append(self.arena, '\n');
+            try self.output.insertSlice(self.arena, bodyStart, line.items);
+        }
+
+        self.declaredTypes = savedTypes;
+        self.routineLocals = .empty;
+        self.routineAssigned = .empty;
+        self.routineKind = .none;
+    }
+
+    fn translateProcedure(self: *Translator) TranslateError!void {
+        const procedureToken = self.advance();
+        const savedTypes = try self.beginRoutine(.procedure, procedureToken);
+        const name = try self.expect(.identifier, "a procedure name");
+        const parameters = try self.parseParameters();
+        try self.endOfStatement();
+        try self.emit(try std.fmt.allocPrint(self.arena, "def {s}({s}):", .{ name.text, parameters }));
+
+        const bodyStart = self.output.items.len;
+        try self.translateBlock(procedureToken, &.{.kw_endprocedure}, "ENDPROCEDURE");
+        _ = self.advance(); // ENDPROCEDURE
+        try self.endOfStatement();
+        try self.finishRoutine(savedTypes, bodyStart);
+    }
+
+    // the arguments of a call, from "(" to ")", as python text
+    fn parseArguments(self: *Translator) TranslateError![]const u8 {
+        _ = try self.expect(.l_paren, "'(' before the arguments");
+        var arguments: std.ArrayList(u8) = .empty;
+        while (!self.check(.r_paren)) {
+            if (arguments.items.len > 0) {
+                _ = try self.expect(.comma, "',' or ')' after the argument");
+                try arguments.appendSlice(self.arena, ", ");
+            }
+            try arguments.appendSlice(self.arena, try self.parseExpression());
+        }
+        _ = self.advance(); // )
+        return arguments.items;
+    }
+
+    fn translateCall(self: *Translator) TranslateError!void {
+        _ = self.advance(); // CALL
+        const name = try self.expect(.identifier, "a procedure name after CALL");
+        const arguments = if (self.check(.l_paren)) try self.parseArguments() else "";
+        try self.endOfStatement();
+        try self.emit(try std.fmt.allocPrint(self.arena, "{s}({s})", .{ name.text, arguments }));
+    }
+
     fn translateAssignment(self: *Translator) TranslateError!void {
         const target = try self.parseTarget("a variable name");
         _ = try self.expect(.arrow, "'<-' or '\u{2190}' after the variable name");
         const value = try self.parseExpression();
         try self.endOfStatement();
+        try self.noteAssigned(target);
         const line = try std.fmt.allocPrint(self.arena, "{s} = {s}", .{ target.text, value });
         try self.emit(line);
     }
@@ -438,12 +564,19 @@ const Translator = struct {
 
         // an array declaration gives the element type and a size
         var arraySize: ?[]const u8 = null;
-        if (self.check(.kw_array)) arraySize = try self.parseArrayBounds();
+        if (self.check(.kw_array)) {
+            const arrayToken = self.current();
+            arraySize = try self.parseArrayBounds();
+            if (arraySize.?.len == 0) {
+                return self.fail(arrayToken, "a declared array needs bounds such as ARRAY[1:10]", .{});
+            }
+        }
 
         const varType = try self.parseTypeName();
         try self.endOfStatement();
 
         for (names.items) |name| {
+            if (self.routineKind != .none) try self.routineLocals.put(self.arena, name.text, {});
             // an array is remembered by its element type, which is what
             // INPUT needs when it reads into one element
             try self.declaredTypes.put(self.arena, name.text, varType);
@@ -458,6 +591,11 @@ const Translator = struct {
     // Reads ARRAY[1:10] OF and returns the python text for the list length.
     fn parseArrayBounds(self: *Translator) TranslateError![]const u8 {
         _ = self.advance(); // ARRAY
+        // parameters may leave the bounds out: ARRAY OF INTEGER
+        if (self.check(.kw_of)) {
+            _ = self.advance();
+            return "";
+        }
         _ = try self.expect(.l_bracket, "'[' after ARRAY");
         const lower = try self.expect(.integer, "a whole number as the lower bound");
         _ = try self.expect(.colon, "':' between the array bounds");
@@ -478,6 +616,7 @@ const Translator = struct {
         _ = self.advance(); // INPUT
         const target = try self.parseTarget("a variable name after INPUT");
         try self.endOfStatement();
+        try self.noteAssigned(target);
 
         // input() always returns text, so numbers need converting. That is
         // only possible when the variable was declared with a type.
@@ -1042,6 +1181,68 @@ test "case value must be a literal" {
 
 test "stray endcase" {
     try expectError("ENDCASE\n", 1, "ENDCASE without a matching CASE");
+}
+
+test "procedure without parameters" {
+    try expectPython(
+        "PROCEDURE Hello\n  OUTPUT \"hi\"\nENDPROCEDURE\nCALL Hello\n",
+        "def Hello():\n    print(\"hi\")\nHello()\n",
+    );
+}
+
+test "procedure with parameters and a call with arguments" {
+    try expectPython(
+        "PROCEDURE Greet(name : STRING, times : INTEGER)\n  OUTPUT name\nENDPROCEDURE\nCALL Greet(\"Al\", 2 + 1)\n",
+        "def Greet(name, times):\n    print(name)\nGreet(\"Al\", 2 + 1)\n",
+    );
+}
+
+test "empty brackets after the procedure name" {
+    try expectPython("PROCEDURE P()\nENDPROCEDURE\nCALL P()\n", "def P():\n    pass\nP()\n");
+}
+
+test "procedure that changes a global variable" {
+    try expectPython(
+        "DECLARE total : INTEGER\nPROCEDURE Add(n : INTEGER)\n  total <- total + n\nENDPROCEDURE\n",
+        "total = 0\ndef Add(n):\n    global total\n    total = total + n\n",
+    );
+}
+
+test "declared and assigned locals are not global" {
+    try expectPython(
+        "PROCEDURE P(n : INTEGER)\n  DECLARE t : INTEGER\n  t <- n\n  n <- 1\nENDPROCEDURE\n",
+        "def P(n):\n    t = 0\n    t = n\n    n = 1\n",
+    );
+}
+
+test "array parameters can leave out the bounds" {
+    try expectPython(
+        "PROCEDURE Show(values : ARRAY OF INTEGER)\n  OUTPUT values[1]\nENDPROCEDURE\n",
+        "def Show(values):\n    print(values[1])\n",
+    );
+}
+
+test "types declared inside a procedure are forgotten afterwards" {
+    try expectPython(
+        "PROCEDURE P\n  DECLARE n : INTEGER\nENDPROCEDURE\nINPUT n\n",
+        "def P():\n    n = 0\nn = input()\n",
+    );
+}
+
+test "procedures cannot be nested" {
+    try expectError("PROCEDURE A\n  PROCEDURE B\n  ENDPROCEDURE\nENDPROCEDURE\n", 2, "a PROCEDURE cannot be defined inside another procedure or function");
+}
+
+test "byref is rejected" {
+    try expectError("PROCEDURE P(BYREF n : INTEGER)\nENDPROCEDURE\n", 1, "BYREF parameters are not supported");
+}
+
+test "procedure without ENDPROCEDURE" {
+    try expectError("PROCEDURE P\nOUTPUT 1\n", 3, "PROCEDURE on line 1 is missing its ENDPROCEDURE");
+}
+
+test "call needs a name" {
+    try expectError("CALL 5\n", 1, "expected a procedure name after CALL but found '5'");
 }
 
 test "next may leave out the variable" {
