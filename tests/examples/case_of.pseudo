@@ -16,3 +16,16 @@ ENDCASE
 CASE OF 7 MOD 4
     3 : OUTPUT "remainder three"
 ENDCASE
+// ranges and lists of values
+FOR mark <- 40 TO 100 STEP 20
+    CASE OF mark
+        80 TO 100 : OUTPUT mark, " A"
+        50 TO 79 : OUTPUT mark, " B"
+        OTHERWISE : OUTPUT mark, " C"
+    ENDCASE
+NEXT mark
+letter <- "e"
+CASE OF letter
+    "a", "e", "i", "o", "u" : OUTPUT "vowel"
+    OTHERWISE : OUTPUT "consonant"
+ENDCASE

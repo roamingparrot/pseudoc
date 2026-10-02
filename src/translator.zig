@@ -324,6 +324,28 @@ const Translator = struct {
         return text.len > 0;
     }
 
+    // One branch label is a value, a range "low TO high", or several of
+    // those separated by commas. Returns the python condition for it.
+    fn parseCaseCondition(self: *Translator, selector: []const u8) TranslateError![]const u8 {
+        var condition: []const u8 = "";
+        while (true) {
+            const low = try self.parseAdditive();
+            var part: []const u8 = undefined;
+            if (self.check(.kw_to)) {
+                _ = self.advance(); // TO
+                const high = try self.parseAdditive();
+                part = try std.fmt.allocPrint(self.arena, "{s} <= {s} <= {s}", .{ low, selector, high });
+            } else {
+                part = try std.fmt.allocPrint(self.arena, "{s} == {s}", .{ selector, low });
+            }
+            condition = if (condition.len == 0) part else try std.fmt.allocPrint(self.arena, "{s} or {s}", .{ condition, part });
+
+            if (!self.check(.comma)) break;
+            _ = self.advance(); // ,
+        }
+        return condition;
+    }
+
     // CASE OF x becomes an if / elif / else chain comparing x with each value
     fn translateCase(self: *Translator) TranslateError!void {
         const caseToken = self.advance();
@@ -356,10 +378,10 @@ const Translator = struct {
             }
 
             if (!self.atAny(&caseBranchEnd)) return self.failUnexpected(self.current(), "a case value or OTHERWISE");
-            const value = try self.parseAdditive();
+            const condition = try self.parseCaseCondition(selector);
             _ = try self.expect(.colon, "':' after the case value");
             const keyword = if (isFirstBranch) "if" else "elif";
-            try self.emit(try std.fmt.allocPrint(self.arena, "{s} {s} == {s}:", .{ keyword, selector, value }));
+            try self.emit(try std.fmt.allocPrint(self.arena, "{s} {s}:", .{ keyword, condition }));
             isFirstBranch = false;
             try self.translateBlock(caseToken, &caseBranchEnd, "ENDCASE");
         }
@@ -983,6 +1005,27 @@ test "case on an expression evaluates it once" {
 
 test "case on a string" {
     try expectPython("CASE OF s\n  \"hi\" : OUTPUT 1\nENDCASE\n", "if s == \"hi\":\n    print(1)\n");
+}
+
+test "case range uses a chained comparison" {
+    try expectPython(
+        "CASE OF mark\n  80 TO 100 : OUTPUT \"A\"\n  50 TO 79 : OUTPUT \"B\"\n  OTHERWISE : OUTPUT \"C\"\nENDCASE\n",
+        "if 80 <= mark <= 100:\n    print(\"A\")\nelif 50 <= mark <= 79:\n    print(\"B\")\nelse:\n    print(\"C\")\n",
+    );
+}
+
+test "case with a list of values" {
+    try expectPython(
+        "CASE OF c\n  'a', 'e', 'i' : OUTPUT 1\nENDCASE\n",
+        "if c == 'a' or c == 'e' or c == 'i':\n    print(1)\n",
+    );
+}
+
+test "case range of characters and negative values" {
+    try expectPython(
+        "CASE OF c\n  'a' TO 'z' : OUTPUT 1\n  -5 TO -1 : OUTPUT 2\nENDCASE\n",
+        "if 'a' <= c <= 'z':\n    print(1)\nelif -5 <= c <= -1:\n    print(2)\n",
+    );
 }
 
 test "case without ENDCASE" {
