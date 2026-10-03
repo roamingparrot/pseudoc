@@ -1,0 +1,28 @@
+FUNCTION Square(n : INTEGER) RETURNS INTEGER
+    RETURN n * n
+ENDFUNCTION
+
+FUNCTION IsEven(n : INTEGER) RETURNS BOOLEAN
+    RETURN n MOD 2 = 0
+ENDFUNCTION
+
+FUNCTION Largest(a : INTEGER, b : INTEGER) RETURNS INTEGER
+    IF a > b THEN
+        RETURN a
+    ENDIF
+    RETURN b
+ENDFUNCTION
+
+FUNCTION Factorial(n : INTEGER) RETURNS INTEGER
+    IF n <= 1 THEN
+        RETURN 1
+    ELSE
+        RETURN n * Factorial(n - 1)
+    ENDIF
+ENDFUNCTION
+
+OUTPUT Square(7)
+OUTPUT IsEven(10), " ", IsEven(7)
+OUTPUT Largest(3, 9), " ", Largest(12, 4)
+OUTPUT Factorial(6)
+OUTPUT Square(Largest(2, 3)) + 1

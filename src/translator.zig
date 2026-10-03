@@ -64,8 +64,8 @@ const Translator = struct {
     declaredTypes: std.StringHashMapUnmanaged(VarType) = .empty,
 
     // State for the procedure or function being translated. A name that is
-    // assigned inside a routine but is not a parameter or declared there
-    // must belong to the main program, so python needs a "global" line.
+    // assigned inside a routine, is not a parameter or declared there, and
+    // was declared earlier in the main program needs a python "global" line.
     routineKind: RoutineKind = .none,
     routineLocals: std.StringHashMapUnmanaged(void) = .empty,
     routineAssigned: std.ArrayList([]const u8) = .empty,
@@ -161,11 +161,14 @@ const Translator = struct {
             .kw_while => try self.translateWhile(),
             .kw_repeat => try self.translateRepeat(),
             .kw_case => try self.translateCase(),
-            .kw_procedure => try self.translateProcedure(),
+            .kw_procedure => try self.translateRoutine(.procedure),
+            .kw_function => try self.translateRoutine(.function),
+            .kw_return => try self.translateReturn(),
             .kw_call => try self.translateCall(),
             .kw_else, .kw_endif => {
                 return self.fail(token, "{s} without a matching IF", .{token.text});
             },
+            .kw_endfunction => return self.fail(token, "ENDFUNCTION without a matching FUNCTION", .{}),
             .kw_endprocedure => return self.fail(token, "ENDPROCEDURE without a matching PROCEDURE", .{}),
             .kw_endcase => return self.fail(token, "ENDCASE without a matching CASE", .{}),
             .kw_otherwise => return self.fail(token, "OTHERWISE outside of a CASE statement", .{}),
@@ -458,6 +461,7 @@ const Translator = struct {
         var globals: std.ArrayList(u8) = .empty;
         for (self.routineAssigned.items) |name| {
             if (self.routineLocals.contains(name)) continue;
+            if (!savedTypes.contains(name)) continue; // never declared outside: just a local
             if (globals.items.len > 0) try globals.appendSlice(self.arena, ", ");
             try globals.appendSlice(self.arena, name);
         }
@@ -476,19 +480,39 @@ const Translator = struct {
         self.routineKind = .none;
     }
 
-    fn translateProcedure(self: *Translator) TranslateError!void {
-        const procedureToken = self.advance();
-        const savedTypes = try self.beginRoutine(.procedure, procedureToken);
-        const name = try self.expect(.identifier, "a procedure name");
+    // PROCEDURE and FUNCTION are almost the same: a function also has a
+    // RETURNS type, which python does not need, and ends with ENDFUNCTION.
+    fn translateRoutine(self: *Translator, kind: RoutineKind) TranslateError!void {
+        const keywordToken = self.advance();
+        const savedTypes = try self.beginRoutine(kind, keywordToken);
+        const name = try self.expect(.identifier, if (kind == .function) "a function name" else "a procedure name");
         const parameters = try self.parseParameters();
+        if (kind == .function) {
+            _ = try self.expect(.kw_returns, "RETURNS and a type after the parameters");
+            _ = try self.parseTypeName();
+        }
         try self.endOfStatement();
         try self.emit(try std.fmt.allocPrint(self.arena, "def {s}({s}):", .{ name.text, parameters }));
 
         const bodyStart = self.output.items.len;
-        try self.translateBlock(procedureToken, &.{.kw_endprocedure}, "ENDPROCEDURE");
-        _ = self.advance(); // ENDPROCEDURE
+        if (kind == .function) {
+            try self.translateBlock(keywordToken, &.{.kw_endfunction}, "ENDFUNCTION");
+        } else {
+            try self.translateBlock(keywordToken, &.{.kw_endprocedure}, "ENDPROCEDURE");
+        }
+        _ = self.advance(); // ENDPROCEDURE or ENDFUNCTION
         try self.endOfStatement();
         try self.finishRoutine(savedTypes, bodyStart);
+    }
+
+    fn translateReturn(self: *Translator) TranslateError!void {
+        const returnToken = self.advance();
+        if (self.routineKind != .function) {
+            return self.fail(returnToken, "RETURN can only be used inside a function", .{});
+        }
+        const value = try self.parseExpression();
+        try self.endOfStatement();
+        try self.emit(try std.fmt.allocPrint(self.arena, "return {s}", .{value}));
     }
 
     // the arguments of a call, from "(" to ")", as python text
@@ -783,6 +807,10 @@ const Translator = struct {
             .identifier => {
                 _ = self.advance();
                 if (self.check(.l_bracket)) return self.parseIndexSuffix(token.text);
+                if (self.check(.l_paren)) {
+                    const arguments = try self.parseArguments();
+                    return std.fmt.allocPrint(self.arena, "{s}({s})", .{ token.text, arguments });
+                }
                 return token.text;
             },
             .kw_true => {
@@ -1208,6 +1236,13 @@ test "procedure that changes a global variable" {
     );
 }
 
+test "undeclared names assigned in a routine stay local" {
+    try expectPython(
+        "PROCEDURE P\n  count <- 1\n  FOR i <- 1 TO 2\n    count <- count + i\n  NEXT i\nENDPROCEDURE\n",
+        "def P():\n    count = 1\n    for i in range(1, 3):\n        count = count + i\n",
+    );
+}
+
 test "declared and assigned locals are not global" {
     try expectPython(
         "PROCEDURE P(n : INTEGER)\n  DECLARE t : INTEGER\n  t <- n\n  n <- 1\nENDPROCEDURE\n",
@@ -1243,6 +1278,52 @@ test "procedure without ENDPROCEDURE" {
 
 test "call needs a name" {
     try expectError("CALL 5\n", 1, "expected a procedure name after CALL but found '5'");
+}
+
+test "function with a return value" {
+    try expectPython(
+        "FUNCTION Square(n : INTEGER) RETURNS INTEGER\n  RETURN n * n\nENDFUNCTION\n",
+        "def Square(n):\n    return n * n\n",
+    );
+}
+
+test "function call inside an expression" {
+    try expectPython("x <- Square(3) + Square(y - 1)\n", "x = Square(3) + Square(y - 1)\n");
+}
+
+test "function call in output and conditions" {
+    try expectPython(
+        "IF IsEven(n) THEN\n  OUTPUT Double(n), \"!\"\nENDIF\n",
+        "if IsEven(n):\n    print(Double(n), \"!\", sep=\"\")\n",
+    );
+}
+
+test "function without parameters" {
+    try expectPython("FUNCTION Five RETURNS INTEGER\n  RETURN 5\nENDFUNCTION\n", "def Five():\n    return 5\n");
+}
+
+test "function may return from inside a loop" {
+    try expectPython(
+        "FUNCTION Find(n : INTEGER) RETURNS INTEGER\n  FOR i <- 1 TO n\n    IF i * i = n THEN\n      RETURN i\n    ENDIF\n  NEXT i\n  RETURN 0\nENDFUNCTION\n",
+        "def Find(n):\n    for i in range(1, n + 1):\n        if i * i == n:\n            return i\n    return 0\n",
+    );
+}
+
+test "function needs RETURNS" {
+    try expectError("FUNCTION F(n : INTEGER)\nENDFUNCTION\n", 1, "expected RETURNS and a type after the parameters but found end of line");
+}
+
+test "return outside a function" {
+    try expectError("RETURN 1\n", 1, "RETURN can only be used inside a function");
+    try expectError("PROCEDURE P\n  RETURN 1\nENDPROCEDURE\n", 2, "RETURN can only be used inside a function");
+}
+
+test "function without ENDFUNCTION" {
+    try expectError("FUNCTION F RETURNS INTEGER\nRETURN 1\n", 3, "FUNCTION on line 1 is missing its ENDFUNCTION");
+}
+
+test "stray endfunction" {
+    try expectError("ENDFUNCTION\n", 1, "ENDFUNCTION without a matching FUNCTION");
 }
 
 test "next may leave out the variable" {
