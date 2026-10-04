@@ -515,19 +515,83 @@ const Translator = struct {
         try self.emit(try std.fmt.allocPrint(self.arena, "return {s}", .{value}));
     }
 
-    // the arguments of a call, from "(" to ")", as python text
-    fn parseArguments(self: *Translator) TranslateError![]const u8 {
+    // the arguments of a call, from "(" to ")", one python text each
+    fn parseArgumentList(self: *Translator) TranslateError![]const []const u8 {
         _ = try self.expect(.l_paren, "'(' before the arguments");
-        var arguments: std.ArrayList(u8) = .empty;
+        var arguments: std.ArrayList([]const u8) = .empty;
         while (!self.check(.r_paren)) {
             if (arguments.items.len > 0) {
                 _ = try self.expect(.comma, "',' or ')' after the argument");
-                try arguments.appendSlice(self.arena, ", ");
             }
-            try arguments.appendSlice(self.arena, try self.parseExpression());
+            try arguments.append(self.arena, try self.parseExpression());
         }
         _ = self.advance(); // )
         return arguments.items;
+    }
+
+    fn parseArguments(self: *Translator) TranslateError![]const u8 {
+        const arguments = try self.parseArgumentList();
+        return std.mem.join(self.arena, ", ", arguments);
+    }
+
+    // Wraps python text in brackets unless it is a plain name or number, so
+    // it is safe to put in front of [..] or next to an operator.
+    fn bracketed(self: *Translator, text: []const u8) ![]const u8 {
+        if (isPlainName(text)) return text;
+        return std.fmt.allocPrint(self.arena, "({s})", .{text});
+    }
+
+    // CIE library functions that exist in python under a different shape.
+    // Returns null when `name` is not a library function.
+    fn translateBuiltin(self: *Translator, token: Token, arguments: []const []const u8) TranslateError!?[]const u8 {
+        const Builtin = struct { name: []const u8, arity: usize };
+        const builtins = [_]Builtin{
+            .{ .name = "LENGTH", .arity = 1 },
+            .{ .name = "UCASE", .arity = 1 },
+            .{ .name = "LCASE", .arity = 1 },
+            .{ .name = "LEFT", .arity = 2 },
+            .{ .name = "RIGHT", .arity = 2 },
+            .{ .name = "MID", .arity = 3 },
+            .{ .name = "SUBSTRING", .arity = 3 },
+            .{ .name = "INT", .arity = 1 },
+            .{ .name = "ROUND", .arity = 2 },
+            .{ .name = "ASC", .arity = 1 },
+            .{ .name = "CHR", .arity = 1 },
+        };
+
+        for (builtins) |builtin| {
+            if (!std.mem.eql(u8, token.text, builtin.name)) continue;
+            if (arguments.len != builtin.arity) {
+                return self.fail(token, "{s} needs {d} argument(s) but was given {d}", .{ builtin.name, builtin.arity, arguments.len });
+            }
+            const a = arguments;
+            const name = token.text;
+            const text = if (std.mem.eql(u8, name, "LENGTH"))
+                try std.fmt.allocPrint(self.arena, "len({s})", .{a[0]})
+            else if (std.mem.eql(u8, name, "UCASE"))
+                try std.fmt.allocPrint(self.arena, "str.upper({s})", .{a[0]})
+            else if (std.mem.eql(u8, name, "LCASE"))
+                try std.fmt.allocPrint(self.arena, "str.lower({s})", .{a[0]})
+            else if (std.mem.eql(u8, name, "LEFT"))
+                try std.fmt.allocPrint(self.arena, "{s}[:{s}]", .{ try self.bracketed(a[0]), a[1] })
+            else if (std.mem.eql(u8, name, "RIGHT"))
+                try std.fmt.allocPrint(self.arena, "{s}[len({s}) - {s}:]", .{ try self.bracketed(a[0]), a[0], try self.bracketed(a[1]) })
+            else if (std.mem.eql(u8, name, "INT"))
+                try std.fmt.allocPrint(self.arena, "int({s})", .{a[0]})
+            else if (std.mem.eql(u8, name, "ROUND"))
+                try std.fmt.allocPrint(self.arena, "round({s}, {s})", .{ a[0], a[1] })
+            else if (std.mem.eql(u8, name, "ASC"))
+                try std.fmt.allocPrint(self.arena, "ord({s})", .{a[0]})
+            else if (std.mem.eql(u8, name, "CHR"))
+                try std.fmt.allocPrint(self.arena, "chr({s})", .{a[0]})
+            else blk: {
+                // MID and SUBSTRING count characters from 1, python from 0
+                const start = try self.bracketed(a[1]);
+                break :blk try std.fmt.allocPrint(self.arena, "{s}[{s} - 1:{s} - 1 + {s}]", .{ try self.bracketed(a[0]), start, start, try self.bracketed(a[2]) });
+            };
+            return text;
+        }
+        return null;
     }
 
     fn translateCall(self: *Translator) TranslateError!void {
@@ -808,8 +872,9 @@ const Translator = struct {
                 _ = self.advance();
                 if (self.check(.l_bracket)) return self.parseIndexSuffix(token.text);
                 if (self.check(.l_paren)) {
-                    const arguments = try self.parseArguments();
-                    return std.fmt.allocPrint(self.arena, "{s}({s})", .{ token.text, arguments });
+                    const arguments = try self.parseArgumentList();
+                    if (try self.translateBuiltin(token, arguments)) |text| return text;
+                    return std.fmt.allocPrint(self.arena, "{s}({s})", .{ token.text, try std.mem.join(self.arena, ", ", arguments) });
                 }
                 return token.text;
             },
@@ -1324,6 +1389,35 @@ test "function without ENDFUNCTION" {
 
 test "stray endfunction" {
     try expectError("ENDFUNCTION\n", 1, "ENDFUNCTION without a matching FUNCTION");
+}
+
+test "length and case functions" {
+    try expectPython(
+        "n <- LENGTH(word)\nu <- UCASE(word)\nl <- LCASE(\"ABC\")\n",
+        "n = len(word)\nu = str.upper(word)\nl = str.lower(\"ABC\")\n",
+    );
+}
+
+test "substring functions count from one" {
+    try expectPython(
+        "a <- LEFT(s, 3)\nb <- RIGHT(s, 2)\nc <- MID(s, 2, 4)\n",
+        "a = s[:3]\nb = s[len(s) - 2:]\nc = s[2 - 1:2 - 1 + 4]\n",
+    );
+}
+
+test "substring of an expression keeps its brackets" {
+    try expectPython("c <- MID(a & b, i + 1, 2)\n", "c = (a + b)[(i + 1) - 1:(i + 1) - 1 + 2]\n");
+}
+
+test "number and character functions" {
+    try expectPython(
+        "a <- INT(x / 2)\nb <- ROUND(x, 2)\nc <- ASC(\"A\")\nd <- CHR(66)\n",
+        "a = int(x / 2)\nb = round(x, 2)\nc = ord(\"A\")\nd = chr(66)\n",
+    );
+}
+
+test "library function with the wrong number of arguments" {
+    try expectError("x <- LENGTH(a, b)\n", 1, "LENGTH needs 1 argument(s) but was given 2");
 }
 
 test "next may leave out the variable" {

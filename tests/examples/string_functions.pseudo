@@ -1,0 +1,16 @@
+word <- "Pseudocode"
+OUTPUT LENGTH(word)
+OUTPUT UCASE(word)
+OUTPUT LCASE(word)
+OUTPUT LEFT(word, 6)
+OUTPUT RIGHT(word, 4)
+OUTPUT MID(word, 7, 2)
+OUTPUT MID(word & "!", LENGTH(word), 2)
+OUTPUT INT(7 / 2)
+OUTPUT ASC("A"), " ", CHR(ASC("A") + 1)
+// reverse a string with a descending loop
+reversed <- ""
+FOR i <- LENGTH(word) TO 1 STEP -1
+    reversed <- reversed & MID(word, i, 1)
+NEXT i
+OUTPUT reversed
