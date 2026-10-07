@@ -897,11 +897,35 @@ const Translator = struct {
     }
 };
 
+// Python words that are fine as CIE variable names but would break the
+// generated code: Python's own keywords, and the builtins the generated code
+// calls itself.
+const reservedPythonNames = std.StaticStringMap(void).initComptime(.{
+    .{"False"},  .{"None"},     .{"True"},  .{"and"},    .{"as"},       .{"assert"},
+    .{"async"},  .{"await"},    .{"break"}, .{"class"},  .{"continue"}, .{"def"},
+    .{"del"},    .{"elif"},     .{"else"},  .{"except"}, .{"finally"},  .{"for"},
+    .{"from"},   .{"global"},   .{"if"},    .{"import"}, .{"in"},       .{"is"},
+    .{"lambda"}, .{"nonlocal"}, .{"not"},   .{"or"},     .{"pass"},     .{"raise"},
+    .{"return"}, .{"try"},      .{"while"}, .{"with"},   .{"yield"},    .{"print"},
+    .{"input"},  .{"range"},    .{"len"},   .{"int"},    .{"float"},    .{"str"},
+    .{"round"},  .{"ord"},      .{"chr"},
+});
+
+// Gives identifiers that clash with python an underscore on the end
+fn renameReservedNames(arena: std.mem.Allocator, tokens: []Token) !void {
+    for (tokens) |*token| {
+        if (token.kind == .identifier and reservedPythonNames.has(token.text)) {
+            token.text = try std.fmt.allocPrint(arena, "{s}_", .{token.text});
+        }
+    }
+}
+
 /// Translates CIE pseudocode into Python source. Everything is allocated
 /// from `arena`, which the caller frees all at once. On a syntax error the
 /// position and message are stored in `diagnostic`.
 pub fn translate(arena: std.mem.Allocator, source: []const u8, diagnostic: *Diagnostic) TranslateError![]const u8 {
     const tokens = try lexer.tokenize(arena, source);
+    try renameReservedNames(arena, tokens);
     var translator = Translator{
         .arena = arena,
         .tokens = tokens,
@@ -1418,6 +1442,18 @@ test "number and character functions" {
 
 test "library function with the wrong number of arguments" {
     try expectError("x <- LENGTH(a, b)\n", 1, "LENGTH needs 1 argument(s) but was given 2");
+}
+
+test "python keywords used as variable names are renamed" {
+    try expectPython("class <- 1\nlambda <- class + 1\n", "class_ = 1\nlambda_ = class_ + 1\n");
+}
+
+test "names the generated code calls are renamed" {
+    try expectPython("len <- 2\nOUTPUT len\n", "len_ = 2\nprint(len_)\n");
+}
+
+test "similar names are left alone" {
+    try expectPython("Class <- 1\nlength <- 2\nprinter <- 3\n", "Class = 1\nlength = 2\nprinter = 3\n");
 }
 
 test "next may leave out the variable" {

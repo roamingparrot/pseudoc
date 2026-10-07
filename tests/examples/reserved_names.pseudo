@@ -1,0 +1,13 @@
+// these are legal CIE names but reserved words in python
+class <- 3
+len <- 2
+from <- 10
+OUTPUT class + len
+IF from > 5 THEN
+    OUTPUT "from is big"
+ENDIF
+FUNCTION is(in : INTEGER) RETURNS INTEGER
+    RETURN in * 2
+ENDFUNCTION
+OUTPUT is(class)
+OUTPUT LENGTH("abc")
