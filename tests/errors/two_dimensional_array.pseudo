@@ -1,0 +1,1 @@
+DECLARE grid : ARRAY[1:3, 1:3] OF INTEGER

@@ -152,7 +152,12 @@ const Translator = struct {
     fn translateStatement(self: *Translator) TranslateError!void {
         const token = self.current();
         switch (token.kind) {
-            .identifier => try self.translateAssignment(),
+            .identifier => {
+                if (self.unsupportedStatement(token)) |reason| {
+                    return self.fail(token, "{s} is not supported ({s})", .{ token.text, reason });
+                }
+                try self.translateAssignment();
+            },
             .kw_output => try self.translateOutput(),
             .kw_input => try self.translateInput(),
             .kw_declare => try self.translateDeclare(),
@@ -405,6 +410,37 @@ const Translator = struct {
         try self.endOfStatement();
     }
 
+    // CIE features this transpiler does not handle. They are not keywords of
+    // the lexer, so they are spotted by name at the start of a statement.
+    fn unsupportedStatement(self: *Translator, token: Token) ?[]const u8 {
+        // an ordinary variable that happens to share the name is still fine
+        const following = self.tokens[self.position + 1].kind;
+        if (following == .arrow or following == .l_bracket) return null;
+
+        const unsupported = [_]struct { []const u8, []const u8 }{
+            .{ "OPENFILE", "file handling" },
+            .{ "READFILE", "file handling" },
+            .{ "WRITEFILE", "file handling" },
+            .{ "CLOSEFILE", "file handling" },
+            .{ "SEEK", "file handling" },
+            .{ "GETRECORD", "file handling" },
+            .{ "PUTRECORD", "file handling" },
+            .{ "TYPE", "user defined types" },
+            .{ "ENDTYPE", "user defined types" },
+            .{ "DEFINE", "user defined types" },
+            .{ "CLASS", "object oriented programming" },
+            .{ "ENDCLASS", "object oriented programming" },
+            .{ "NEW", "object oriented programming" },
+            .{ "INHERITS", "object oriented programming" },
+            .{ "PUBLIC", "object oriented programming" },
+            .{ "PRIVATE", "object oriented programming" },
+        };
+        for (unsupported) |entry| {
+            if (std.mem.eql(u8, token.text, entry[0])) return entry[1];
+        }
+        return null;
+    }
+
     fn noteAssigned(self: *Translator, target: Target) !void {
         if (self.routineKind == .none) return;
         // assigning to an element changes the list but does not rebind the name
@@ -558,6 +594,14 @@ const Translator = struct {
             .{ .name = "ASC", .arity = 1 },
             .{ .name = "CHR", .arity = 1 },
         };
+
+        // library functions that are known but not translated
+        const unsupported = [_][]const u8{ "RAND", "EOF" };
+        for (unsupported) |name| {
+            if (std.mem.eql(u8, token.text, name)) {
+                return self.fail(token, "{s} is not supported", .{name});
+            }
+        }
 
         for (builtins) |builtin| {
             if (!std.mem.eql(u8, token.text, builtin.name)) continue;
@@ -1454,6 +1498,29 @@ test "names the generated code calls are renamed" {
 
 test "similar names are left alone" {
     try expectPython("Class <- 1\nlength <- 2\nprinter <- 3\n", "Class = 1\nlength = 2\nprinter = 3\n");
+}
+
+test "file handling is reported as unsupported" {
+    try expectError("OPENFILE \"data.txt\" FOR READ\n", 1, "OPENFILE is not supported (file handling)");
+    try expectError("CLOSEFILE \"data.txt\"\n", 1, "CLOSEFILE is not supported (file handling)");
+}
+
+test "user defined types and classes are reported as unsupported" {
+    try expectError("TYPE Point\n", 1, "TYPE is not supported (user defined types)");
+    try expectError("CLASS Animal\n", 1, "CLASS is not supported (object oriented programming)");
+}
+
+test "unsupported name used as an ordinary variable still works" {
+    try expectPython("TYPE <- 1\n", "TYPE = 1\n");
+}
+
+test "unsupported library functions" {
+    try expectError("x <- RAND(10)\n", 1, "RAND is not supported");
+    try expectError("WHILE NOT EOF(f) DO\nENDWHILE\n", 1, "EOF is not supported");
+}
+
+test "assignment with a plain equals sign gives a hint about the arrow" {
+    try expectError("x = 5\n", 1, "expected '<-' or '\u{2190}' after the variable name but found '='");
 }
 
 test "next may leave out the variable" {
