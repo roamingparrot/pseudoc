@@ -351,7 +351,7 @@ test "comparison operators" {
 
 test "arithmetic and brackets" {
     try expectKinds("a[1] + (2 * 3) ^ 2 / 4 - 5 & b", &.{
-        .identifier, .l_bracket, .integer, .r_bracket, .plus, .l_paren, .integer, .star, .integer, .r_paren,
+        .identifier, .l_bracket, .integer, .r_bracket, .plus,  .l_paren, .integer,   .star,       .integer, .r_paren,
         .caret,      .integer,   .slash,   .integer,   .minus, .integer, .ampersand, .identifier, .eof,
     });
 }
