@@ -1,0 +1,7 @@
+CONSTANT Pi = 3.14
+CONSTANT Limit <- 3
+CONSTANT Greeting = "Area of circles"
+OUTPUT Greeting
+FOR radius <- 1 TO Limit
+    OUTPUT radius, ": ", Pi * radius ^ 2
+NEXT radius

@@ -161,6 +161,7 @@ const Translator = struct {
             .kw_output => try self.translateOutput(),
             .kw_input => try self.translateInput(),
             .kw_declare => try self.translateDeclare(),
+            .kw_constant => try self.translateConstant(),
             .kw_if => try self.translateIf(),
             .kw_for => try self.translateFor(),
             .kw_while => try self.translateWhile(),
@@ -675,6 +676,21 @@ const Translator = struct {
             return Target{ .name = name, .text = try self.parseIndexSuffix(name.text) };
         }
         return Target{ .name = name, .text = name.text };
+    }
+
+    // CONSTANT Rate = 0.2  (the arrow is accepted too). Python has no
+    // constants, so this is a plain assignment.
+    fn translateConstant(self: *Translator) TranslateError!void {
+        _ = self.advance(); // CONSTANT
+        const name = try self.expect(.identifier, "a constant name after CONSTANT");
+        if (self.check(.equals) or self.check(.arrow)) {
+            _ = self.advance();
+        } else {
+            return self.failUnexpected(self.current(), "'=' and a value after the constant name");
+        }
+        const value = try self.parseExpression();
+        try self.endOfStatement();
+        try self.emit(try std.fmt.allocPrint(self.arena, "{s} = {s}", .{ name.text, value }));
     }
 
     fn parseTypeName(self: *Translator) TranslateError!VarType {
@@ -1521,6 +1537,18 @@ test "unsupported library functions" {
 
 test "assignment with a plain equals sign gives a hint about the arrow" {
     try expectError("x = 5\n", 1, "expected '<-' or '\u{2190}' after the variable name but found '='");
+}
+
+test "constant with equals sign" {
+    try expectPython("CONSTANT Pi = 3.14159\nCONSTANT Greeting = \"hi\"\n", "Pi = 3.14159\nGreeting = \"hi\"\n");
+}
+
+test "constant with an arrow" {
+    try expectPython("CONSTANT Limit <- 10\n", "Limit = 10\n");
+}
+
+test "constant without a value" {
+    try expectError("CONSTANT Limit\n", 1, "expected '=' and a value after the constant name but found end of line");
 }
 
 test "next may leave out the variable" {
