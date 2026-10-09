@@ -1,0 +1,19 @@
+DECLARE names : ARRAY[1:4] OF STRING
+DECLARE target : STRING
+DECLARE position : INTEGER
+names[1] <- "Ada"
+names[2] <- "Grace"
+names[3] <- "Alan"
+names[4] <- "Edsger"
+INPUT target
+position <- 0
+FOR i <- 1 TO 4
+    IF names[i] = target THEN
+        position <- i
+    ENDIF
+NEXT i
+IF position = 0 THEN
+    OUTPUT target, " not found"
+ELSE
+    OUTPUT target, " found at position ", position
+ENDIF

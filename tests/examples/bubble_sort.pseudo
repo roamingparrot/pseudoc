@@ -1,0 +1,24 @@
+// bubble sort of five numbers read from the user
+DECLARE numbers : ARRAY[1:5] OF INTEGER
+DECLARE temp : INTEGER
+DECLARE swapped : BOOLEAN
+
+FOR i <- 1 TO 5
+    INPUT numbers[i]
+NEXT i
+
+REPEAT
+    swapped <- FALSE
+    FOR i <- 1 TO 4
+        IF numbers[i] > numbers[i + 1] THEN
+            temp <- numbers[i]
+            numbers[i] <- numbers[i + 1]
+            numbers[i + 1] <- temp
+            swapped <- TRUE
+        ENDIF
+    NEXT i
+UNTIL swapped = FALSE
+
+FOR i <- 1 TO 5
+    OUTPUT numbers[i]
+NEXT i

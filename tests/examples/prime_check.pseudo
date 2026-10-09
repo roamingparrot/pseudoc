@@ -1,0 +1,24 @@
+FUNCTION IsPrime(n : INTEGER) RETURNS BOOLEAN
+    IF n < 2 THEN
+        RETURN FALSE
+    ENDIF
+    DECLARE divisor : INTEGER
+    divisor <- 2
+    WHILE divisor * divisor <= n DO
+        IF n MOD divisor = 0 THEN
+            RETURN FALSE
+        ENDIF
+        divisor <- divisor + 1
+    ENDWHILE
+    RETURN TRUE
+ENDFUNCTION
+
+DECLARE count : INTEGER
+count <- 0
+FOR number <- 1 TO 30
+    IF IsPrime(number) THEN
+        OUTPUT number
+        count <- count + 1
+    ENDIF
+NEXT number
+OUTPUT "primes found: ", count

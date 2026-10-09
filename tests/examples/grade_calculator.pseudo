@@ -1,0 +1,22 @@
+FUNCTION Grade(mark : INTEGER) RETURNS STRING
+    CASE OF mark
+        70 TO 100 : RETURN "A"
+        60 TO 69 : RETURN "B"
+        50 TO 59 : RETURN "C"
+        OTHERWISE : RETURN "U"
+    ENDCASE
+ENDFUNCTION
+
+PROCEDURE Report(name : STRING, mark : INTEGER)
+    OUTPUT name, ": ", mark, " grade ", Grade(mark)
+ENDPROCEDURE
+
+DECLARE total : INTEGER
+DECLARE mark : INTEGER
+total <- 0
+FOR student <- 1 TO 3
+    INPUT mark
+    total <- total + mark
+    CALL Report("student " & "x", mark)
+NEXT student
+OUTPUT "average: ", total / 3

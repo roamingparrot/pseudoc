@@ -1,0 +1,6 @@
+// celsius to fahrenheit, counting down in steps of 20
+OUTPUT "C    F"
+FOR celsius <- 100 TO 0 STEP -20
+    fahrenheit <- celsius * 9 / 5 + 32
+    OUTPUT celsius, "   ", fahrenheit
+NEXT celsius
