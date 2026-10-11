@@ -1,0 +1,4 @@
+IF 1 = 1
+THEN
+ OUTPUT 1
+ENDIF

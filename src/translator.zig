@@ -210,9 +210,18 @@ const Translator = struct {
         self.indentLevel -= 1;
     }
 
+    // Some programs put THEN on a line of its own. Skip the line break only
+    // when THEN really is the next thing, so other mistakes keep their message.
+    fn allowThenOnNextLine(self: *Translator) void {
+        var lookahead = self.position;
+        while (self.tokens[lookahead].kind == .newline) lookahead += 1;
+        if (self.tokens[lookahead].kind == .kw_then) self.position = lookahead;
+    }
+
     fn translateIf(self: *Translator) TranslateError!void {
         const ifToken = self.advance();
         const condition = try self.parseExpression();
+        self.allowThenOnNextLine();
         _ = try self.expect(.kw_then, "THEN after the condition");
         try self.endOfStatement();
         try self.emit(try std.fmt.allocPrint(self.arena, "if {s}:", .{condition}));
@@ -1561,6 +1570,10 @@ test "for without NEXT" {
 
 test "stray next" {
     try expectError("NEXT i\n", 1, "NEXT without a matching FOR");
+}
+
+test "THEN on the line after the condition" {
+    try expectPython("IF x > 1\nTHEN\n  OUTPUT 1\nENDIF\n", "if x > 1:\n    print(1)\n");
 }
 
 test "if without THEN" {
