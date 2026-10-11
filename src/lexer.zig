@@ -72,7 +72,7 @@ pub const TokenKind = enum {
 };
 
 // CIE keywords are written in capitals, so lookup is case sensitive
-const keywords = std.StaticStringMap(TokenKind).initComptime(.{
+pub const keywords = std.StaticStringMap(TokenKind).initComptime(.{
     .{ "DECLARE", .kw_declare },
     .{ "CONSTANT", .kw_constant },
     .{ "INPUT", .kw_input },

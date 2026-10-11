@@ -156,6 +156,9 @@ const Translator = struct {
                 if (self.unsupportedStatement(token)) |reason| {
                     return self.fail(token, "{s} is not supported ({s})", .{ token.text, reason });
                 }
+                if (self.lowercaseKeyword(token)) |capitals| {
+                    return self.fail(token, "'{s}' looks like the keyword {s}, which must be written in capitals", .{ originalName(token.text), capitals });
+                }
                 try self.translateAssignment();
             },
             .kw_output => try self.translateOutput(),
@@ -418,6 +421,17 @@ const Translator = struct {
         }
         _ = self.advance(); // ENDCASE
         try self.endOfStatement();
+    }
+
+    // A statement that starts with a word like "if" or "Output" is almost
+    // certainly a keyword written without capitals. Returns the capitals.
+    fn lowercaseKeyword(self: *Translator, token: Token) ?[]const u8 {
+        const following = self.tokens[self.position + 1].kind;
+        if (following == .arrow or following == .l_bracket) return null;
+
+        const capitals = std.ascii.allocUpperString(self.arena, originalName(token.text)) catch return null;
+        if (lexer.keywords.get(capitals) != null) return capitals;
+        return null;
     }
 
     // CIE features this transpiler does not handle. They are not keywords of
@@ -989,6 +1003,14 @@ fn renameReservedNames(arena: std.mem.Allocator, tokens: []Token) !void {
     }
 }
 
+// undoes the underscore that renameReservedNames added, for error messages
+fn originalName(text: []const u8) []const u8 {
+    if (std.mem.endsWith(u8, text, "_") and reservedPythonNames.has(text[0 .. text.len - 1])) {
+        return text[0 .. text.len - 1];
+    }
+    return text;
+}
+
 /// Translates CIE pseudocode into Python source. Everything is allocated
 /// from `arena`, which the caller frees all at once. On a syntax error the
 /// position and message are stored in `diagnostic`.
@@ -1558,6 +1580,15 @@ test "constant with an arrow" {
 
 test "constant without a value" {
     try expectError("CONSTANT Limit\n", 1, "expected '=' and a value after the constant name but found end of line");
+}
+
+test "keywords written in lower case get a hint" {
+    try expectError("if x = 1 THEN\nENDIF\n", 1, "'if' looks like the keyword IF, which must be written in capitals");
+    try expectError("Output x\n", 1, "'Output' looks like the keyword OUTPUT, which must be written in capitals");
+}
+
+test "a variable named like a keyword is fine when it is assigned" {
+    try expectPython("output <- 1\n", "output = 1\n");
 }
 
 test "next may leave out the variable" {
