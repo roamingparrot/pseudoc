@@ -8,7 +8,10 @@ For every tests/examples/NAME.pseudo this script
 For every tests/errors/NAME.pseudo the compiler must fail, and its error
 output must contain the text found in NAME.err.
 
-usage: python3 tests/run_examples.py path/to/pseudocode_compiler
+usage: python3 tests/run_examples.py [path/to/pseudocode_compiler]
+
+Without an argument it uses zig-out/bin/pseudocode_compiler, so run
+`zig build` first. It can be run from any directory.
 """
 import subprocess
 import sys
@@ -53,7 +56,11 @@ def runErrorCase(compiler, source):
 
 
 def main():
-    compiler = sys.argv[1]
+    defaultCompiler = testsDir.parent / "zig-out" / "bin" / "pseudocode_compiler"
+    compiler = sys.argv[1] if len(sys.argv) > 1 else str(defaultCompiler)
+    if not Path(compiler).exists():
+        print("compiler not found at %s - run `zig build` first" % compiler)
+        sys.exit(2)
     failures = 0
     total = 0
 
