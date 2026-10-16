@@ -940,6 +940,18 @@ const Translator = struct {
         return escaped.items;
     }
 
+    // Some programs write MOD(a, b) and DIV(a, b) like functions instead of
+    // a MOD b. Both forms give the same Python.
+    fn parseOperatorCall(self: *Translator, keyword: Token) TranslateError![]const u8 {
+        if (!self.check(.l_paren)) return self.failUnexpected(keyword, "a value");
+        const arguments = try self.parseArgumentList();
+        if (arguments.len != 2) {
+            return self.fail(keyword, "{s}(a, b) needs 2 arguments but was given {d}", .{ keyword.text, arguments.len });
+        }
+        const pythonOperator = if (keyword.kind == .kw_mod) "%" else "//";
+        return std.fmt.allocPrint(self.arena, "({s} {s} {s})", .{ try self.bracketed(arguments[0]), pythonOperator, try self.bracketed(arguments[1]) });
+    }
+
     fn parsePrimary(self: *Translator) TranslateError![]const u8 {
         const token = self.current();
         switch (token.kind) {
@@ -960,6 +972,10 @@ const Translator = struct {
                     return std.fmt.allocPrint(self.arena, "{s}({s})", .{ token.text, try std.mem.join(self.arena, ", ", arguments) });
                 }
                 return token.text;
+            },
+            .kw_mod, .kw_div => {
+                _ = self.advance();
+                return self.parseOperatorCall(token);
             },
             .kw_true => {
                 _ = self.advance();
@@ -1112,6 +1128,22 @@ test "missing closing bracket" {
 
 test "div and mod become integer division and remainder" {
     try expectPython("q <- a DIV 3\nr <- a MOD 3\n", "q = a // 3\nr = a % 3\n");
+}
+
+test "mod and div written like functions" {
+    try expectPython("r <- MOD(sum, 10)\nq <- DIV(a + 1, 3)\n", "r = (sum % 10)\nq = ((a + 1) // 3)\n");
+}
+
+test "function style mod inside an expression" {
+    try expectPython("x <- 10 - MOD(n, 3) * 2\n", "x = 10 - (n % 3) * 2\n");
+}
+
+test "function style mod needs two arguments" {
+    try expectError("x <- MOD(5)\n", 1, "MOD(a, b) needs 2 arguments but was given 1");
+}
+
+test "mod without brackets or a left side is still an error" {
+    try expectError("x <- MOD\n", 1, "expected a value but found 'MOD'");
 }
 
 test "power operator" {

@@ -1,6 +1,6 @@
 # CIE pseudocode to Python transpiler
 
-A command line tool written in Zig that translates Cambridge International (CIE)
+A command line tool written in Zig that transpiles Cambridge International (CIE)
 pseudocode into Python 3. It reads a `.pseudo` file and prints the equivalent
 Python program, which can then be run with `python3`.
 
@@ -59,7 +59,7 @@ python3 functions.py
 | `CASE OF x` ... `ENDCASE` | `if` / `elif` / `else` chain |
 | `AND`, `OR`, `NOT` | `and`, `or`, `not` |
 | `=`, `<>`, `<`, `<=`, `>`, `>=` | `==`, `!=`, `<`, `<=`, `>`, `>=` |
-| `+ - * /`, `DIV`, `MOD`, `^` | `+ - * /`, `//`, `%`, `**` |
+| `+ - * /`, `DIV`, `MOD`, `^` (also `MOD(a, b)` and `DIV(a, b)`) | `+ - * /`, `//`, `%`, `**` |
 | `&` (string join) | `+` |
 | `TRUE`, `FALSE` | `True`, `False` |
 | `DECLARE x : INTEGER` | `x = 0` (default value for the type) |
@@ -220,7 +220,6 @@ src/translator.zig   parses the tokens and writes the Python
 tests/examples/      programs with expected output
 tests/errors/        programs that must be rejected, with expected messages
 tests/run_examples.py  integration test runner
-DEVELOPMENT.md       how the project was built, week by week
 ```
 
 The translator is a single pass: a recursive descent parser that returns Python

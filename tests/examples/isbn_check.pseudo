@@ -1,0 +1,36 @@
+DECLARE isbn : ARRAY[1:13] OF INTEGER
+DECLARE sum : INTEGER
+// declarations
+sum ← 0
+
+FOR i ← 1 TO 13
+    // inputting isbn number
+    OUTPUT "enter the isbn number 1 by 1"
+    INPUT isbn[i]
+    // multiplication of each number
+
+    FOR o ← 1 TO 3 STEP 2
+
+        IF i <> 13 THEN
+            isbn[i] ← isbn[i] * o
+        ENDIF
+    NEXT o
+
+NEXT i
+
+// summing the numbers
+
+FOR p ← 1 TO 12
+    sum ← sum + isbn[p]
+NEXT p
+
+// sum arithmetics
+sum ← MOD(sum, 10)
+sum ← 10 - sum
+// final check on the sum
+
+IF sum = isbn[13] THEN
+    OUTPUT "yeah thats valid"
+ELSE
+    OUTPUT "nah thats wrong"
+ENDIF
