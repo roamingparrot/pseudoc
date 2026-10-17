@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.svg" width="120" alt="pseudoc logo: an assignment arrow turning into an equals sign">
+</p>
+
 # CIE pseudocode to Python transpiler
 
 A command line tool written in Zig that transpiles Cambridge International (CIE)
