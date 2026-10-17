@@ -1,6 +1,4 @@
-<p align="center">
-  <img src="assets/logo.svg" width="120" alt="pseudoc logo: an assignment arrow turning into an equals sign">
-</p>
+![pseudoc logo: an assignment arrow turning into an equals sign](assets/banner.svg)
 
 # CIE pseudocode to Python transpiler
 
